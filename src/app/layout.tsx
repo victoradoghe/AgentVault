@@ -27,6 +27,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        // Browser extensions (e.g. Grammarly) inject attributes onto <body>
+        // before hydration; suppress the resulting attribute mismatch warning.
+        suppressHydrationWarning
       >
         {children}
         <Toaster />
