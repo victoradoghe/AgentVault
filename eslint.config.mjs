@@ -18,7 +18,26 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Generated Prisma client and the MCP package's compiled output.
+      "src/generated/**",
+      "packages/*/dist/**",
     ],
+  },
+  {
+    // `.cjs` files are CommonJS by definition — `require()` is the correct
+    // syntax there, not a lint violation.
+    files: ["**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
+    // A leading underscore marks a parameter that exists only to satisfy a
+    // signature (e.g. typing a mock's arguments). Don't flag those as unused.
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
   },
 ];
 

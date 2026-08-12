@@ -1,0 +1,80 @@
+// Prisma schema for Agent Memory Cloud.
+//
+// Connection strings live in `prisma.config.ts` (Prisma 7 moved them out of the
+// schema). Two URLs are used: the pooled DATABASE_URL for the app runtime and
+// the direct DIRECT_URL for migrations (Supabase pgBouncer requirement).
+//
+// NOTE: the pgvector `embedding vector(384)` column on `memories` is
+// intentionally NOT modeled here — Prisma has no native `vector` type. It is
+// added out-of-band by `prisma/pgvector.sql` (run after `prisma db push`) and
+// is read/written only through raw SQL in the service layer.
+
+// Prisma 7: the client uses the query-compiler + a driver adapter (no Rust
+// engine). Connection strings live in `prisma.config.ts`, not here.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  apiKeys  ApiKey[]
+  projects Project[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  keyHash    String    @map("key_hash")
+  label      String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+model Project {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  slug      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memories Memory[]
+
+  @@unique([userId, slug])
+  @@map("projects")
+}
+
+model Memory {
+  id         String   @id @default(uuid()) @db.Uuid
+  projectId  String   @map("project_id") @db.Uuid
+  title      String
+  content    String
+  category   String   @default("General")
+  importance Int      @default(3)
+  status     String   @default("approved")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // embedding vector(384) is added via a manual SQL migration; see the schema
+  // header note above. It is queried with raw SQL, not through the Prisma model.
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("memories")
+}
