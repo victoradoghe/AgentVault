@@ -1,0 +1,145 @@
+# amc-mcp
+
+**Agent Memory Cloud** as an [MCP](https://modelcontextprotocol.io) server. It gives your coding agent (Claude Code, Codex CLI, OpenCode, …) **persistent, project-scoped memory**: load prior decisions at the start of a task, and save important ones as you go.
+
+This is a thin stdio client of the Agent Memory Cloud (AMC) REST API — it stores nothing locally and contains no database. All it needs is your **AMC API key**.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `list_projects` | List the memory projects available to your API key. |
+| `get_project_context(project_slug)` | **Load my memory** — returns the full markdown context bundle for a project. Call this at the start of a task. |
+| `search_memory(project_slug, query, limit?)` | Semantic search over a project's memories. |
+| `save_memory(project_slug, title, content, category?, importance?)` | Save an important decision/fact. Call this whenever a meaningful decision is made. |
+| `list_memories(project_slug, category?)` | List a project's memories, optionally by category. |
+| `delete_memory(memory_id)` | Permanently delete one memory. |
+
+## Prerequisites
+
+1. An Agent Memory Cloud account and an **API key** (looks like `amc_…`). Create one in the AMC dashboard under **Settings → API Keys**.
+2. Node.js 18.18+ (only if you run it via `npx`).
+
+## Configuration
+
+The server is configured entirely through environment variables:
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AMC_API_KEY` | ✅ | — | Your AMC API key (`amc_…`). Sent as a Bearer token. |
+| `AMC_BASE_URL` | — | `https://agent-memory-cloud.vercel.app` | Override to point at a local dev server, e.g. `http://localhost:3000`. |
+
+---
+
+### Claude Code
+
+**Option A — CLI (recommended):**
+
+```bash
+claude mcp add amc \
+  -e AMC_API_KEY=amc_your_key_here \
+  -- npx -y amc-mcp
+```
+
+**Option B — project `.mcp.json`** (commit it to share with your team; keep the key in an env var, not the file):
+
+```json
+{
+  "mcpServers": {
+    "amc": {
+      "command": "npx",
+      "args": ["-y", "amc-mcp"],
+      "env": {
+        "AMC_API_KEY": "amc_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Code, then run `/mcp` to confirm `amc` is connected.
+
+---
+
+### Codex CLI
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.amc]
+command = "npx"
+args = ["-y", "amc-mcp"]
+env = { AMC_API_KEY = "amc_your_key_here" }
+```
+
+---
+
+### OpenCode
+
+Add to your `opencode.json` (project root) or `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "amc": {
+      "type": "local",
+      "command": ["npx", "-y", "amc-mcp"],
+      "environment": {
+        "AMC_API_KEY": "amc_your_key_here"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+---
+
+## Pointing at a local dev server
+
+For local AMC development, set `AMC_BASE_URL` to your dev server. For Claude Code:
+
+```bash
+claude mcp add amc-dev \
+  -e AMC_API_KEY=amc_your_key_here \
+  -e AMC_BASE_URL=http://localhost:3000 \
+  -- npx -y amc-mcp
+```
+
+For Codex/OpenCode, add `AMC_BASE_URL` alongside `AMC_API_KEY` in the `env` / `environment` block above.
+
+## Running from source (contributors)
+
+Until the package is published to npm, run the built entrypoint directly:
+
+```bash
+pnpm --filter amc-mcp install
+pnpm --filter amc-mcp build      # emits dist/
+AMC_API_KEY=amc_your_key_here node packages/amc-mcp/dist/index.js
+```
+
+To register the local build with Claude Code, point `command` at `node` and pass the absolute path to `dist/index.js`:
+
+```bash
+claude mcp add amc-local \
+  -e AMC_API_KEY=amc_your_key_here \
+  -e AMC_BASE_URL=http://localhost:3000 \
+  -- node /absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js
+```
+
+## How agents should use it
+
+- **At the start of a task**, call `get_project_context` to load prior decisions, conventions, and gotchas.
+- **When an important decision is made** (architecture, a convention, a non-obvious constraint, a fix that worked), call `save_memory` with a specific title and the *why*.
+- Use `search_memory` for targeted recall mid-task.
+
+## Troubleshooting
+
+- **`AMC_API_KEY is not set`** — the env var is missing from your MCP config. Add it and restart your agent.
+- **`Authentication failed (401)`** — the key is wrong, revoked, or malformed. Generate a new one in the dashboard.
+- **`Could not reach the AMC API …`** — the server is unreachable. Check `AMC_BASE_URL` and your connection; this error is transient and safe to retry.
+
+## License
+
+MIT

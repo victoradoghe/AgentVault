@@ -1,0 +1,40 @@
+{
+  "name": "amc-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (stdio) server for Agent Memory Cloud (AMC). Gives coding agents persistent, project-scoped memory by wrapping the AMC REST API.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent-memory-cloud",
+    "amc",
+    "memory",
+    "ai-agents"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "amc-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.5.0"
+  }
+}
