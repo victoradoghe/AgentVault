@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+import { supabasePublicKey, supabaseUrl } from "./keys";
+
 /**
  * Supabase client for the SERVER (Server Components, Route Handlers, Server
  * Actions). Reads/writes the auth session through Next's request cookies so the
@@ -16,8 +18,8 @@ export async function createClient() {
   const cookieStore = await cookies();
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl()!,
+    supabasePublicKey()!,
     {
       cookies: {
         getAll() {

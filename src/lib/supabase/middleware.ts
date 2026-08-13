@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { supabasePublicKey, supabaseUrl } from "./keys";
+
 /**
  * Session refresh + route guard used by the root `src/middleware.ts`.
  *
@@ -15,8 +17,8 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl()!,
+    supabasePublicKey()!,
     {
       cookies: {
         getAll() {

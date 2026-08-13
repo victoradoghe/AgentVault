@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Environment variable schema for Agent Memory Cloud.
+ * Environment variable schema for AgentVault.
  *
  * Nothing here is allowed to throw at import time — this module is pulled in by
  * `prisma.ts` and therefore by every server module, including auth paths that
@@ -34,6 +34,11 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: emptyToUndefined(
     z.string().min(1).optional().catch(undefined),
   ),
+  // Supabase's newer name for the same browser-safe key. Either variable works;
+  // see src/lib/supabase/keys.ts.
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: emptyToUndefined(
+    z.string().min(1).optional().catch(undefined),
+  ),
   SUPABASE_SERVICE_ROLE_KEY: emptyToUndefined(
     z.string().min(1).optional().catch(undefined),
   ),
@@ -45,6 +50,8 @@ const parsed = envSchema.safeParse({
   DIRECT_URL: process.env.DIRECT_URL,
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
 });
 

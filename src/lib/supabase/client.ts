@@ -1,5 +1,7 @@
 import { createBrowserClient } from "@supabase/ssr";
 
+import { supabasePublicKey, supabaseUrl } from "./keys";
+
 /**
  * Supabase client for the BROWSER (Client Components).
  *
@@ -9,8 +11,5 @@ import { createBrowserClient } from "@supabase/ssr";
  * server client and middleware can read.
  */
 export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
+  return createBrowserClient(supabaseUrl()!, supabasePublicKey()!);
 }

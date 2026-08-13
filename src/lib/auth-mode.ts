@@ -1,7 +1,7 @@
 /**
  * Auth mode detection — shared by client, server, and the edge middleware.
  *
- * Agent Memory Cloud supports two auth backends:
+ * AgentVault supports two auth backends:
  *
  *   - **Supabase** (production): used whenever the Supabase env vars are set.
  *   - **Local dev** (stopgap): used automatically when they are NOT set, so the
@@ -16,7 +16,11 @@
 /** True when a real Supabase project is configured (→ use Supabase auth). */
 export function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  // Supabase renamed the browser-safe key from "anon" to "publishable"; accept
+  // either variable name so a newer project's key isn't silently ignored.
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   if (!url || !key) return false;
   // Ignore the shipped placeholder so a copied .env.example stays in local mode.
   if (url.includes("your-project-ref")) return false;
