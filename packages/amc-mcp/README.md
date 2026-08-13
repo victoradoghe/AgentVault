@@ -1,8 +1,8 @@
 # amc-mcp
 
-**Agent Memory Cloud** as an [MCP](https://modelcontextprotocol.io) server. It gives your coding agent (Claude Code, Codex CLI, OpenCode, …) **persistent, project-scoped memory**: load prior decisions at the start of a task, and save important ones as you go.
+**AgentVault** as an [MCP](https://modelcontextprotocol.io) server. It gives your coding agent (Claude Code, Codex CLI, OpenCode, …) **persistent, project-scoped memory**: load prior decisions at the start of a task, and save important ones as you go.
 
-This is a thin stdio client of the Agent Memory Cloud (AMC) REST API — it stores nothing locally and contains no database. All it needs is your **AMC API key**.
+This is a thin stdio client of the AgentVault REST API — it stores nothing locally and contains no database. All it needs is your **AgentVault API key**.
 
 ## Tools
 
@@ -17,7 +17,7 @@ This is a thin stdio client of the Agent Memory Cloud (AMC) REST API — it stor
 
 ## Prerequisites
 
-1. An Agent Memory Cloud account and an **API key** (looks like `amc_…`). Create one in the AMC dashboard under **Settings → API Keys**.
+1. An AgentVault account and an **API key** (looks like `amc_…`). Create one in the AgentVault dashboard under **Settings → API Keys**.
 2. Node.js 18.18+ (only if you run it via `npx`).
 
 ## Configuration
@@ -26,7 +26,7 @@ The server is configured entirely through environment variables:
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `AMC_API_KEY` | ✅ | — | Your AMC API key (`amc_…`). Sent as a Bearer token. |
+| `AMC_API_KEY` | ✅ | — | Your AgentVault API key (`amc_…`). Sent as a Bearer token. |
 | `AMC_BASE_URL` | — | `https://agent-memory-cloud.vercel.app` | Override to point at a local dev server, e.g. `http://localhost:3000`. |
 
 ---
@@ -98,7 +98,7 @@ Add to your `opencode.json` (project root) or `~/.config/opencode/opencode.json`
 
 ## Pointing at a local dev server
 
-For local AMC development, set `AMC_BASE_URL` to your dev server. For Claude Code:
+For local AgentVault development, set `AMC_BASE_URL` to your dev server. For Claude Code:
 
 ```bash
 claude mcp add amc-dev \
@@ -138,7 +138,7 @@ claude mcp add amc-local \
 
 - **`AMC_API_KEY is not set`** — the env var is missing from your MCP config. Add it and restart your agent.
 - **`Authentication failed (401)`** — the key is wrong, revoked, or malformed. Generate a new one in the dashboard.
-- **`Could not reach the AMC API …`** — the server is unreachable. Check `AMC_BASE_URL` and your connection; this error is transient and safe to retry.
+- **`Could not reach the AgentVault API …`** — the server is unreachable. Check `AMC_BASE_URL` and your connection; this error is transient and safe to retry.
 
 ## License
 

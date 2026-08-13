@@ -1,6 +1,6 @@
 # server/ — Core Memory Service (phase 4)
 
-Server-only service layer for Agent Memory Cloud. **All memory business logic
+Server-only service layer for AgentVault. **All memory business logic
 lives here.** The REST API (phase 5) and the MCP server (phase 6) call these
 functions; neither ever touches Prisma or the embedding model directly.
 

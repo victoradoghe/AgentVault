@@ -1,5 +1,5 @@
 /**
- * The fixed memory taxonomy for Agent Memory Cloud.
+ * The fixed memory taxonomy for AgentVault.
  *
  * This module is the SINGLE SOURCE OF TRUTH for the category set and the
  * importance scale. Forms, API validation, table filters, badges, and the

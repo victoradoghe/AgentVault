@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 /**
- * Unit-test config for the Agent Memory Cloud service layer.
+ * Unit-test config for the AgentVault service layer.
  *
  * These tests cover the pure logic — context packing, the category taxonomy,
  * input validation, slugging, and session-token signing — so the whole suite

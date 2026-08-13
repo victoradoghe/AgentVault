@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Agent Memory Cloud",
+  title: "AgentVault",
   description: "Cloud memory service for AI coding agents.",
 };
 

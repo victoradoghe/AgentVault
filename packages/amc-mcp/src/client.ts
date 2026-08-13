@@ -1,5 +1,5 @@
 /**
- * Thin HTTP client for the Agent Memory Cloud (AMC) REST API.
+ * Thin HTTP client for the AgentVault REST API.
  *
  * This package contains NO database, embedding, or model code — it is purely
  * a client of the phase-5 REST API, authenticating with the user's API key as
@@ -169,7 +169,7 @@ export class AmcClient {
             ? err.message
             : "unknown network error";
       throw new AmcError(
-        `Could not reach the AMC API at ${this.baseUrl} (${reason}). ` +
+        `Could not reach the AgentVault API at ${this.baseUrl} (${reason}). ` +
           `Check AMC_BASE_URL and your connection, then try again.`,
         { retriable: true },
       );
@@ -202,7 +202,7 @@ export class AmcClient {
     if (res.status === 401 || res.status === 403) {
       return new AmcError(
         `Authentication failed (${res.status}). Your AMC_API_KEY is missing, ` +
-          `invalid, or revoked. Generate a new key in the AMC dashboard and ` +
+          `invalid, or revoked. Generate a new key in the AgentVault dashboard and ` +
           `update your MCP config.${detail ? ` Server said: ${detail}` : ""}`,
         { status: res.status, retriable: false },
       );
@@ -222,7 +222,7 @@ export class AmcClient {
     }
     if (res.status >= 500) {
       return new AmcError(
-        `The AMC API returned a server error (${res.status}). This is usually ` +
+        `The AgentVault API returned a server error (${res.status}). This is usually ` +
           `transient — try again shortly.${detail ? ` Server said: ${detail}` : ""}`,
         { status: res.status, retriable: true },
       );

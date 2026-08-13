@@ -5,7 +5,7 @@ import { env } from "@/lib/env";
 import { ServiceError } from "@/server/errors";
 
 /**
- * HTTP helpers shared by every AMC REST route handler.
+ * HTTP helpers shared by every AgentVault REST route handler.
  *
  * Response envelopes are intentionally simple and match what the MCP client
  * (`packages/amc-mcp/src/client.ts`) unwraps: bare `{ <key>: ... }` objects for

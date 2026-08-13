@@ -25,7 +25,7 @@ export function DashboardNav({ email }: { email: string | null }) {
     <header className="border-b">
       <div className="mx-auto flex h-14 max-w-5xl items-center gap-6 px-6">
         <Link href="/dashboard" className="font-semibold tracking-tight">
-          Agent Memory Cloud
+          AgentVault
         </Link>
         <nav className="flex items-center gap-1">
           {LINKS.map((link) => (

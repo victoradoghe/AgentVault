@@ -1,7 +1,7 @@
 {
   "name": "amc-mcp",
   "version": "0.1.0",
-  "description": "Model Context Protocol (stdio) server for Agent Memory Cloud (AMC). Gives coding agents persistent, project-scoped memory by wrapping the AMC REST API.",
+  "description": "Model Context Protocol (stdio) server for AgentVault. Gives coding agents persistent, project-scoped memory by wrapping the AgentVault REST API.",
   "keywords": [
     "mcp",
     "model-context-protocol",

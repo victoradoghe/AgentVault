@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * amc-mcp — Agent Memory Cloud MCP server (stdio).
+ * amc-mcp — AgentVault MCP server (stdio).
  *
  * Runs as a stdio MCP server so coding agents (Claude Code, Codex CLI,
  * OpenCode, …) can load and save project-scoped memory. It is a thin client of
- * the AMC REST API; configuration comes entirely from environment variables:
+ * the AgentVault REST API; configuration comes entirely from environment variables:
  *
- *   AMC_API_KEY   (required)  — your AMC API key (amc_...).
+ *   AMC_API_KEY   (required)  — your AgentVault API key (amc_...).
  *   AMC_BASE_URL  (optional)  — override the API base URL (local dev).
  */
 

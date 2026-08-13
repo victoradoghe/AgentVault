@@ -1,4 +1,4 @@
--- pgvector setup for Agent Memory Cloud.
+-- pgvector setup for AgentVault.
 --
 -- Prisma can't model a `vector` column, so the embedding lives outside the
 -- Prisma schema and is managed here. Run this AFTER `prisma db push` (which

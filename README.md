@@ -1,8 +1,8 @@
-# Agent Memory Cloud
+# AgentVault
 
 Persistent, semantically-searchable memory for AI coding agents.
 
-Coding agents start every session cold. AMC gives them a project-scoped memory
+Coding agents start every session cold. AgentVault gives them a project-scoped memory
 they can read at the start of a task and write to as decisions get made — so the
 architectural choice you explained last week doesn't have to be explained again.
 
@@ -12,7 +12,7 @@ what your agents remember.
 
 ```
 ┌─────────────────┐   MCP (stdio)   ┌──────────────┐   HTTPS + API key   ┌────────────────┐
-│  Coding agent   │ ──────────────► │   amc-mcp    │ ──────────────────► │   AMC REST API │
+│  Coding agent   │ ──────────────► │   amc-mcp    │ ──────────────────► │ AgentVault API │
 │ (Claude Code…)  │                 │ (thin client)│                     │   (Next.js)    │
 └─────────────────┘                 └──────────────┘                     └───────┬────────┘
                                                                                  │
@@ -65,7 +65,7 @@ parses as a valid URL.
 
 ### Authentication
 
-AMC runs in one of two auth modes, chosen automatically:
+AgentVault runs in one of two auth modes, chosen automatically:
 
 | Mode | When | Behaviour |
 | --- | --- | --- |
@@ -98,8 +98,9 @@ The agent then has six tools: `list_projects`, `get_project_context`,
 | `DATABASE_URL` | ✅ | Pooled Postgres connection (app runtime). Keep `?pgbouncer=true` on Supabase. |
 | `DIRECT_URL` | ✅ | Direct Postgres connection (migrations only). |
 | `NEXT_PUBLIC_SUPABASE_URL` | — | Enables Supabase auth. Blank → local auth mode. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | Public anon key. |
-| `SUPABASE_SERVICE_ROLE_KEY` | — | Server-only. Never expose to the browser. |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | — | Browser-safe public key. Supabase's current name for it. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | The older name for the same key. Either variable works — see [`src/lib/supabase/keys.ts`](src/lib/supabase/keys.ts). |
+| `SUPABASE_SERVICE_ROLE_KEY` | — | Server-only, optional. Nothing reads it today. Never expose to the browser. |
 | `AMC_LOCAL_AUTH_SECRET` | — | Signs local-mode session cookies. Dev fallback if unset. |
 | `HF_ENDPOINT` | — | Mirror host for the embedding model on restricted networks. |
 

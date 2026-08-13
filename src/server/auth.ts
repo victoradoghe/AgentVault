@@ -14,7 +14,7 @@ import { verifyLocalSessionToken } from "./localSession";
  * that picks between the two is `src/lib/api/auth.ts`. This module owns only the
  * session → local-user mapping.
  *
- * AMC keeps its own `User` row (projects/memories hang off it) keyed by the
+ * AgentVault keeps its own `User` row (projects/memories hang off it) keyed by the
  * email of the Supabase auth user. We upsert that row on demand so a user's
  * first authenticated action transparently provisions their local account.
  */

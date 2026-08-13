@@ -1,4 +1,4 @@
-# Agent Memory Cloud — API Reference
+# AgentVault — API Reference
 
 > This file documents the memory taxonomy, the project **context package**, and
 > the **REST endpoints**. The category enum and context shape come from

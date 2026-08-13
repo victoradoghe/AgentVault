@@ -1,5 +1,5 @@
 /**
- * `pnpm verify` — end-to-end preflight for a fresh Agent Memory Cloud install.
+ * `pnpm verify` — end-to-end preflight for a fresh AgentVault install.
  *
  * Answers one question: "is this deployment actually working?" It walks the
  * whole stack in dependency order and stops at the first thing that is broken,
@@ -303,7 +303,7 @@ async function checkRoundTrip(): Promise<void> {
   try {
     const project = await createProject({
       userId: user.id,
-      name: "AMC Verification Project",
+      name: "AgentVault Verification Project",
     });
     pass(`Created project "${project.name}" (slug: ${project.slug})`);
 
@@ -382,7 +382,7 @@ async function checkRoundTrip(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  console.log("\n\x1b[1mAgent Memory Cloud — verification\x1b[0m");
+  console.log("\n\x1b[1mAgentVault — verification\x1b[0m");
 
   checkEnv();
   await checkDatabase();
@@ -392,7 +392,7 @@ async function main(): Promise<void> {
   await checkRoundTrip();
 
   console.log(
-    "\n\x1b[32m\x1b[1m✓ All checks passed.\x1b[0m Your AMC install is working end to end.",
+    "\n\x1b[32m\x1b[1m✓ All checks passed.\x1b[0m Your AgentVault install is working end to end.",
   );
   console.log(
     "\x1b[2m  Next: run `pnpm dev`, create an API key under Settings → API Keys,\x1b[0m",

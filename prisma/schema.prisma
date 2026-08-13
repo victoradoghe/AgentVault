@@ -1,4 +1,4 @@
-// Prisma schema for Agent Memory Cloud.
+// Prisma schema for AgentVault.
 //
 // Connection strings live in `prisma.config.ts` (Prisma 7 moved them out of the
 // schema). Two URLs are used: the pooled DATABASE_URL for the app runtime and

@@ -16,7 +16,7 @@ import {
 } from "./schemas";
 
 /**
- * Core memory service — the heart of Agent Memory Cloud.
+ * Core memory service — the heart of AgentVault.
  *
  * ALL memory business logic lives here. The REST API and the MCP server call
  * these functions; neither ever touches Prisma or the embedding model directly.

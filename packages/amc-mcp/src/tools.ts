@@ -1,7 +1,7 @@
 /**
- * MCP tool definitions for Agent Memory Cloud.
+ * MCP tool definitions for AgentVault.
  *
- * Each tool wraps one AMC REST endpoint. Descriptions are written for the
+ * Each tool wraps one AgentVault REST endpoint. Descriptions are written for the
  * *calling agent* — they explain when to reach for the tool, not just what it
  * does — and deliberately nudge the agent to load context at the start of a
  * task and to save memories when meaningful decisions are made.
@@ -81,7 +81,7 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     {
       title: "List memory projects",
       description:
-        "List all Agent Memory Cloud projects available to your API key. Each " +
+        "List all AgentVault projects available to your API key. Each " +
         "project is an isolated memory space (usually one per codebase/repo). " +
         "Use this to discover the correct `project_slug` before calling other " +
         "tools when you are unsure which project to use.",
