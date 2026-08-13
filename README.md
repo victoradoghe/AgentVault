@@ -77,15 +77,26 @@ See [`src/lib/auth-mode.ts`](src/lib/auth-mode.ts).
 
 ## Connecting an agent
 
-1. Start the app and open **Settings → API Keys**.
-2. Create a key (`amc_…`). It is shown **once** — only its SHA-256 hash is stored.
-3. Register the MCP server with your agent:
+1. Build the MCP server once: `pnpm --filter amc-mcp build`.
+2. Start the app and open **Settings → API Keys**. Create a key (`amc_…`) — it is shown
+   **once**, and only its SHA-256 hash is stored.
+3. Open **Dashboard → Connect your agent**, paste the key, and copy the generated
+   command for Claude Code, Codex CLI, or OpenCode.
+
+That page fills in your key and the correct base URL, so the command runs as-is.
+The manual equivalent looks like this:
 
 ```bash
-claude mcp add amc -e AMC_API_KEY=amc_your_key_here -- npx -y amc-mcp
+claude mcp add agentvault \
+  -e AMC_API_KEY=amc_your_key_here \
+  -e AMC_BASE_URL=http://localhost:3000 \
+  -- node /absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js
 ```
 
-Point at a local dev server by also passing `-e AMC_BASE_URL=http://localhost:3000`.
+> `npx -y amc-mcp` does **not** work — the package isn't published to npm. Launch the
+> built entrypoint by absolute path, and set `AMC_BASE_URL` to the address the app is
+> actually served on (the default points at an undeployed host).
+
 Codex CLI and OpenCode configs are in [`packages/amc-mcp/README.md`](packages/amc-mcp/README.md).
 
 The agent then has six tools: `list_projects`, `get_project_context`,

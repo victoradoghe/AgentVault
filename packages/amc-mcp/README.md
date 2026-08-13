@@ -18,7 +18,15 @@ This is a thin stdio client of the AgentVault REST API — it stores nothing loc
 ## Prerequisites
 
 1. An AgentVault account and an **API key** (looks like `amc_…`). Create one in the AgentVault dashboard under **Settings → API Keys**.
-2. Node.js 18.18+ (only if you run it via `npx`).
+2. Node.js 18.18+.
+
+> **The dashboard writes these commands for you.** Open **Dashboard → Connect your agent**,
+> paste your API key, and copy a command with the key and base URL already filled in.
+> That page is the easiest path; everything below is the manual equivalent.
+
+> **`npx -y amc-mcp` does not work yet** — this package is not published to npm.
+> Launch the built entrypoint by absolute path instead, as shown below. Build it once with
+> `pnpm --filter amc-mcp build`.
 
 ## Configuration
 
@@ -38,7 +46,7 @@ The server is configured entirely through environment variables:
 ```bash
 claude mcp add amc \
   -e AMC_API_KEY=amc_your_key_here \
-  -- npx -y amc-mcp
+  -- node /absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js
 ```
 
 **Option B — project `.mcp.json`** (commit it to share with your team; keep the key in an env var, not the file):
@@ -47,8 +55,8 @@ claude mcp add amc \
 {
   "mcpServers": {
     "amc": {
-      "command": "npx",
-      "args": ["-y", "amc-mcp"],
+      "command": "node",
+      "args": ["/absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js"],
       "env": {
         "AMC_API_KEY": "amc_your_key_here"
       }
@@ -67,8 +75,8 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.amc]
-command = "npx"
-args = ["-y", "amc-mcp"]
+command = "node"
+args = ["/absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js"]
 env = { AMC_API_KEY = "amc_your_key_here" }
 ```
 
@@ -84,7 +92,7 @@ Add to your `opencode.json` (project root) or `~/.config/opencode/opencode.json`
   "mcp": {
     "amc": {
       "type": "local",
-      "command": ["npx", "-y", "amc-mcp"],
+      "command": ["node", "/absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js"],
       "environment": {
         "AMC_API_KEY": "amc_your_key_here"
       },
@@ -104,7 +112,7 @@ For local AgentVault development, set `AMC_BASE_URL` to your dev server. For Cla
 claude mcp add amc-dev \
   -e AMC_API_KEY=amc_your_key_here \
   -e AMC_BASE_URL=http://localhost:3000 \
-  -- npx -y amc-mcp
+  -- node /absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js
 ```
 
 For Codex/OpenCode, add `AMC_BASE_URL` alongside `AMC_API_KEY` in the `env` / `environment` block above.

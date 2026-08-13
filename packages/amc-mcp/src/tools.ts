@@ -1,10 +1,21 @@
 /**
  * MCP tool definitions for AgentVault.
  *
- * Each tool wraps one AgentVault REST endpoint. Descriptions are written for the
- * *calling agent* — they explain when to reach for the tool, not just what it
- * does — and deliberately nudge the agent to load context at the start of a
- * task and to save memories when meaningful decisions are made.
+ * Each tool wraps one AgentVault REST endpoint.
+ *
+ * TOKEN BUDGET — this file is performance-critical for the *calling* agent:
+ *
+ *   1. Tool definitions (name + description + schema) are re-sent to the model
+ *      on EVERY turn, so prose here is a per-request tax. Descriptions keep only
+ *      the behavioural nudges that change what an agent does ("call this at the
+ *      start of a task", "call this when a decision is made") and drop
+ *      restatements of what the schema already says.
+ *   2. Tool *results* are returned as compact text, not pretty-printed JSON.
+ *      `JSON.stringify(x, null, 2)` spends a third of its tokens on whitespace
+ *      and repeats every key on every item.
+ *   3. `list_memories` returns titles WITHOUT bodies (browsing rarely needs
+ *      them), and `search_memory` truncates long bodies. Full curated content
+ *      comes from `get_project_context`.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -35,6 +46,13 @@ const MEMORY_CATEGORIES = [
   "General",
 ] as const;
 
+/**
+ * Longest memory body returned by `search_memory`, in characters (~150 tokens).
+ * Most memories fit well inside this, so truncation is rare; the cap only stops
+ * one long memory from swamping an agent's context.
+ */
+const SNIPPET_CHARS = 600;
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -44,10 +62,11 @@ type ToolResult = {
 function guard(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   return fn().catch((err): ToolResult => {
     if (err instanceof AmcError) {
-      const hint = err.retriable
-        ? " (transient — you can retry this call)"
-        : "";
-      return { content: [{ type: "text", text: `Error: ${err.message}${hint}` }], isError: true };
+      const hint = err.retriable ? " (transient — you can retry this call)" : "";
+      return {
+        content: [{ type: "text", text: `Error: ${err.message}${hint}` }],
+        isError: true,
+      };
     }
     const message = err instanceof Error ? err.message : String(err);
     return { content: [{ type: "text", text: `Unexpected error: ${message}` }], isError: true };
@@ -58,21 +77,20 @@ function ok(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
 }
 
-function json(value: unknown): ToolResult {
-  return ok(JSON.stringify(value, null, 2));
+/** Truncate on a word boundary, flagging that the body was shortened. */
+function snippet(text: string, max = SNIPPET_CHARS): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}… [truncated]`;
 }
 
-/** Compact, human/agent-friendly rendering of a memory. */
-function formatMemory(m: Memory): Record<string, unknown> {
-  return {
-    id: m.id,
-    title: m.title,
-    content: m.content,
-    category: m.category,
-    importance: m.importance,
-    ...(m.score !== undefined ? { score: Number(m.score.toFixed(4)) } : {}),
-    ...(m.updatedAt ? { updatedAt: m.updatedAt } : {}),
-  };
+/** One-line header shared by search and list renderings. */
+function headline(m: Memory): string {
+  const bits = [m.category, m.importance !== undefined ? `i${m.importance}` : null]
+    .filter(Boolean)
+    .join(" ");
+  return `${m.title}${bits ? ` (${bits})` : ""}`;
 }
 
 export function registerTools(server: McpServer, client: AmcClient): void {
@@ -81,10 +99,8 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     {
       title: "List memory projects",
       description:
-        "List all AgentVault projects available to your API key. Each " +
-        "project is an isolated memory space (usually one per codebase/repo). " +
-        "Use this to discover the correct `project_slug` before calling other " +
-        "tools when you are unsure which project to use.",
+        "List the memory projects this API key can access. Use it to find a " +
+        "project_slug when you don't already know one.",
       inputSchema: {},
     },
     () =>
@@ -92,16 +108,17 @@ export function registerTools(server: McpServer, client: AmcClient): void {
         const projects = await client.listProjects();
         if (projects.length === 0) {
           return ok(
-            "No projects found for this API key. Create one in the Agent Memory " +
-              "Cloud dashboard, then use its slug with the other tools.",
+            "No projects yet. Create one in the AgentVault dashboard, then use its slug.",
           );
         }
-        return json(
-          projects.map((p) => ({
-            name: p.name,
-            slug: p.slug,
-            ...(p.memoryCount !== undefined ? { memoryCount: p.memoryCount } : {}),
-          })),
+        return ok(
+          projects
+            .map(
+              (p) =>
+                `${p.slug}  ${p.name}` +
+                (p.memoryCount !== undefined ? `  (${p.memoryCount})` : ""),
+            )
+            .join("\n"),
         );
       }),
   );
@@ -109,19 +126,13 @@ export function registerTools(server: McpServer, client: AmcClient): void {
   server.registerTool(
     "get_project_context",
     {
-      title: "Load project memory (context bundle)",
+      title: "Load project memory",
       description:
-        "Load the full memory context bundle for a project as markdown. THIS IS " +
-        "THE PRIMARY 'LOAD MY MEMORY' TOOL — call it at the START of a task, " +
-        "before you begin planning or writing code, so you inherit prior " +
-        "decisions, conventions, and gotchas instead of starting cold. The " +
-        "bundle is curated (most important / most relevant memories first) and " +
-        "meant to be read in full. If you don't know the slug, call list_projects first.",
+        "Load a project's curated memory as markdown. CALL THIS AT THE START OF " +
+        "A TASK, before planning or writing code, so you inherit prior decisions, " +
+        "conventions, and gotchas instead of starting cold. Read it in full.",
       inputSchema: {
-        project_slug: z
-          .string()
-          .min(1)
-          .describe("The project's slug, e.g. \"my-app\" (from list_projects)."),
+        project_slug: z.string().min(1),
       },
     },
     ({ project_slug }) =>
@@ -129,8 +140,7 @@ export function registerTools(server: McpServer, client: AmcClient): void {
         const markdown = await client.getProjectContext(project_slug);
         if (!markdown.trim()) {
           return ok(
-            `Project "${project_slug}" has no memories yet. As you make important ` +
-              "decisions, use save_memory to build up its context.",
+            `Project "${project_slug}" has no memories yet. Use save_memory as decisions are made.`,
           );
         }
         return ok(markdown);
@@ -142,29 +152,29 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     {
       title: "Search project memory",
       description:
-        "Semantic search over a project's memories for a specific question or " +
-        "topic. Use this when you need targeted recall mid-task (e.g. \"how is " +
-        "auth handled?\", \"why did we pick Prisma?\") rather than the whole " +
-        "context bundle. Returns the most relevant memories with similarity scores.",
+        "Semantic search over a project's memories. Use for targeted recall " +
+        "mid-task; use get_project_context for the whole picture. Long bodies are " +
+        "truncated.",
       inputSchema: {
-        project_slug: z.string().min(1).describe("The project's slug."),
-        query: z.string().min(1).describe("Natural-language search query."),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(50)
-          .optional()
-          .describe("Max results to return (default server-side, e.g. 10)."),
+        project_slug: z.string().min(1),
+        query: z.string().min(1),
+        limit: z.number().int().min(1).max(50).optional(),
       },
     },
     ({ project_slug, query, limit }) =>
       guard(async () => {
         const results = await client.searchMemory(project_slug, query, limit);
         if (results.length === 0) {
-          return ok(`No memories matched "${query}" in project "${project_slug}".`);
+          return ok(`No memories matched "${query}" in "${project_slug}".`);
         }
-        return json(results.map(formatMemory));
+        return ok(
+          results
+            .map((m) => {
+              const score = m.score !== undefined ? `[${m.score.toFixed(2)}] ` : "";
+              return `${score}${headline(m)}\n${snippet(m.content)}\nid: ${m.id}`;
+            })
+            .join("\n\n"),
+        );
       }),
   );
 
@@ -173,43 +183,22 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     {
       title: "Save a memory",
       description:
-        "Persist an important, durable fact to a project's memory so future " +
-        "sessions (yours or another agent's) inherit it. CALL THIS WHENEVER AN " +
-        "IMPORTANT DECISION IS MADE — an architectural choice and its rationale, " +
-        "a convention, a non-obvious constraint, a fix that worked, or a hard-won " +
-        "gotcha. Prefer a specific title and self-contained content; don't save " +
-        "transient chatter or secrets. Categories help organise recall.",
+        "Save a durable fact so future sessions inherit it. CALL THIS WHENEVER AN " +
+        "IMPORTANT DECISION IS MADE — an architectural choice, a convention, a " +
+        "non-obvious constraint, a fix that worked, a hard-won gotcha. Include the " +
+        "WHY, keep it self-contained, and never save secrets or transient chatter.",
       inputSchema: {
-        project_slug: z.string().min(1).describe("The project's slug."),
-        title: z
-          .string()
-          .min(1)
-          .max(200)
-          .describe("Short, specific title for the memory (max 200 chars)."),
-        content: z
-          .string()
-          .min(1)
-          .max(20_000)
-          .describe("The fact to remember, self-contained. Include the WHY for decisions."),
-        category: z
-          .enum(MEMORY_CATEGORIES)
-          .optional()
-          .describe(
-            "Optional category from the fixed taxonomy. Use \"TechnicalDecision\" for " +
-              "a choice + rationale, \"Architecture\" for system shape, \"CodingStandard\" " +
-              "for conventions, \"BugFix\"/\"BugReport\", \"Configuration\", \"SecurityNote\", " +
-              "etc. Defaults server-side to \"General\".",
-          ),
+        project_slug: z.string().min(1),
+        title: z.string().min(1).max(200),
+        content: z.string().min(1).max(20_000),
+        category: z.enum(MEMORY_CATEGORIES).optional(),
         importance: z
           .number()
           .int()
           .min(1)
           .max(5)
           .optional()
-          .describe(
-            "Optional 1–5: 1 Low, 2 Minor, 3 Moderate, 4 High, 5 Critical. " +
-              "Defaults server-side to 3.",
-          ),
+          .describe("1–5, 5 = critical. Default 3."),
       },
     },
     ({ project_slug, title, content, category, importance }) =>
@@ -221,11 +210,7 @@ export function registerTools(server: McpServer, client: AmcClient): void {
           category,
           importance,
         });
-        return ok(
-          `Saved memory "${saved.title ?? title}"` +
-            (saved.id ? ` (id: ${saved.id})` : "") +
-            ` to project "${project_slug}".`,
-        );
+        return ok(`Saved "${saved.title ?? title}"${saved.id ? ` (${saved.id})` : ""}.`);
       }),
   );
 
@@ -234,15 +219,12 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     {
       title: "List project memories",
       description:
-        "List a project's saved memories, optionally filtered by category. Use " +
-        "this to browse or audit what has been remembered (e.g. before deleting " +
-        "a stale memory). For finding memories about a topic, prefer search_memory.",
+        "List a project's memory titles, optionally by category. Bodies are NOT " +
+        "included — use search_memory to read content, or get_project_context for " +
+        "the curated bundle.",
       inputSchema: {
-        project_slug: z.string().min(1).describe("The project's slug."),
-        category: z
-          .enum(MEMORY_CATEGORIES)
-          .optional()
-          .describe("Optional category filter from the fixed taxonomy, e.g. \"Architecture\"."),
+        project_slug: z.string().min(1),
+        category: z.enum(MEMORY_CATEGORIES).optional(),
       },
     },
     ({ project_slug, category }) =>
@@ -250,11 +232,10 @@ export function registerTools(server: McpServer, client: AmcClient): void {
         const memories = await client.listMemories(project_slug, category);
         if (memories.length === 0) {
           return ok(
-            `No memories${category ? ` in category "${category}"` : ""} for project ` +
-              `"${project_slug}".`,
+            `No memories${category ? ` in "${category}"` : ""} for "${project_slug}".`,
           );
         }
-        return json(memories.map(formatMemory));
+        return ok(memories.map((m) => `${m.id}  ${headline(m)}`).join("\n"));
       }),
   );
 
@@ -263,17 +244,16 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     {
       title: "Delete a memory",
       description:
-        "Permanently delete a single memory by its id (obtain ids from " +
-        "list_memories or search_memory). Use when a memory is wrong, obsolete, " +
-        "or a duplicate. This cannot be undone.",
+        "Permanently delete one memory by id (ids come from list_memories or " +
+        "search_memory). Cannot be undone.",
       inputSchema: {
-        memory_id: z.string().min(1).describe("The id of the memory to delete."),
+        memory_id: z.string().min(1),
       },
     },
     ({ memory_id }) =>
       guard(async () => {
         await client.deleteMemory(memory_id);
-        return ok(`Deleted memory ${memory_id}.`);
+        return ok(`Deleted ${memory_id}.`);
       }),
   );
 }
