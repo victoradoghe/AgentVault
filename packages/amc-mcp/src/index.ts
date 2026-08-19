@@ -14,6 +14,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config.js";
 import { AmcClient } from "./client.js";
+import { OfflineClient } from "./offline.js";
+import { OfflineStore, namespaceFor } from "./store.js";
 import { registerTools } from "./tools.js";
 
 async function main(): Promise<void> {
@@ -25,7 +27,15 @@ async function main(): Promise<void> {
     version: "0.1.0",
   });
 
-  const client = new AmcClient(config);
+  const store = new OfflineStore(
+    config.cacheDir,
+    namespaceFor(config.baseUrl, config.apiKey),
+  );
+  const client = new OfflineClient(
+    new AmcClient(config),
+    store,
+    config.offlineEnabled,
+  );
   registerTools(server, client);
 
   const transport = new StdioServerTransport();
@@ -33,7 +43,17 @@ async function main(): Promise<void> {
 
   // IMPORTANT: never write to stdout — it carries the MCP JSON-RPC stream.
   // Diagnostics go to stderr only.
-  console.error(`amc-mcp ready (base URL: ${config.baseUrl})`);
+  const pending = client.pendingCount();
+  console.error(
+    `amc-mcp ready (base URL: ${config.baseUrl}` +
+      (config.offlineEnabled ? `, offline cache: ${config.cacheDir}` : ", offline cache: off") +
+      `)` +
+      (pending > 0 ? `\namc-mcp: ${pending} write(s) queued offline, will sync on first call.` : ""),
+  );
+
+  // Drain anything left over from a previous offline session without waiting
+  // for the agent's first tool call. A failure here just means still offline.
+  void client.flush().catch(() => {});
 }
 
 main().catch((err) => {

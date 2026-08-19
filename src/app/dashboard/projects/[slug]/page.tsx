@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Pencil, Search, Trash2, Plus, FileText } from "lucide-react";
+import { ArrowLeft, Pencil, Search, Trash2, Plus, FileText, CloudOff } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 
@@ -48,8 +48,13 @@ import {
   ApiError,
   type MemoryInput as ApiMemoryInput,
   type MemoryRecord,
+  type ProjectSummary,
   type SearchResult,
 } from "@/lib/api/client";
+import { CachedAt } from "@/components/offline-banner";
+import { useOffline } from "@/components/offline-provider";
+import { cacheKeys } from "@/lib/offline/cache";
+import { useCachedQuery } from "@/lib/offline/use-cached-query";
 
 type Row = MemoryRecord & { score?: number };
 
@@ -72,41 +77,49 @@ export default function ProjectDetailPage() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
 
-  const [projectName, setProjectName] = useState<string | null>(null);
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const { offline, reportResult } = useOffline();
+
   const [filter, setFilter] = useState<string>(CATEGORY_FILTER_ALL);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [mode, setMode] = useState<"browse" | "search">("browse");
+  const [searchRows, setSearchRows] = useState<Row[] | null>(null);
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MemoryRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [contextMd, setContextMd] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setRows(null);
-    try {
-      const category = filter === CATEGORY_FILTER_ALL ? undefined : filter;
-      const memories = await api.listMemories(slug, category);
-      setRows(memories);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to load memories.");
-      setRows([]);
-    }
-  }, [slug, filter]);
+  const category = filter === CATEGORY_FILTER_ALL ? undefined : filter;
 
-  // Resolve the project name once (nice header; the API is slug-scoped otherwise).
-  useEffect(() => {
-    api
-      .listProjects()
-      .then((ps) => setProjectName(ps.find((p) => p.slug === slug)?.name ?? slug))
-      .catch(() => setProjectName(slug));
-  }, [slug]);
+  // Browsing reads through the offline cache: this list is the thing a user
+  // most wants on a train, so a cached copy is shown immediately and kept when
+  // the server can't be reached. Search cannot work the same way — it needs the
+  // embedding model server-side — so it stays online-only.
+  const fetchMemories = useCallback(
+    () => api.listMemories(slug, category),
+    [slug, category],
+  );
+  const {
+    data: browseRows,
+    cachedAt,
+    stale,
+    loading: browseLoading,
+    error: browseError,
+    refresh: reloadMemories,
+  } = useCachedQuery<MemoryRecord[]>(cacheKeys.memories(slug, category), fetchMemories);
 
-  useEffect(() => {
-    if (mode === "browse") void load();
-  }, [mode, load]);
+  // The header name comes from the (also cached) project list, so it survives
+  // offline too instead of falling back to the raw slug.
+  const fetchProjects = useCallback(() => api.listProjects(), []);
+  const { data: projects } = useCachedQuery<ProjectSummary[]>(
+    cacheKeys.projects(),
+    fetchProjects,
+  );
+  const projectName = projects?.find((p) => p.slug === slug)?.name ?? slug;
+
+  const rows: Row[] | null = mode === "search" ? searchRows : browseRows;
+  const loading = mode === "search" ? searching : browseLoading;
 
   const runSearch = async () => {
     const q = query.trim();
@@ -114,15 +127,22 @@ export default function ProjectDetailPage() {
       setMode("browse");
       return;
     }
+    if (offline) {
+      toast.error("Semantic search needs a connection. Browse the cached list instead.");
+      return;
+    }
     setSearching(true);
     setMode("search");
-    setRows(null);
+    setSearchRows(null);
     try {
       const results: SearchResult[] = await api.searchMemories(slug, q);
-      setRows(results);
+      setSearchRows(results);
+      reportResult(true);
     } catch (err) {
+      // An ApiError means the server answered; anything else never reached it.
+      reportResult(err instanceof ApiError);
       toast.error(err instanceof ApiError ? err.message : "Search failed.");
-      setRows([]);
+      setSearchRows([]);
     } finally {
       setSearching(false);
     }
@@ -130,6 +150,7 @@ export default function ProjectDetailPage() {
 
   const clearSearch = () => {
     setQuery("");
+    setSearchRows(null);
     setMode("browse");
   };
 
@@ -140,7 +161,7 @@ export default function ProjectDetailPage() {
       toast.success("Memory saved.");
       setCreating(false);
       setMode("browse");
-      await load();
+      reloadMemories();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to save memory.");
     } finally {
@@ -155,7 +176,7 @@ export default function ProjectDetailPage() {
       await api.updateMemory(editing.id, toApiInput(values));
       toast.success("Memory updated.");
       setEditing(null);
-      if (mode === "browse") await load();
+      reloadMemories();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to update memory.");
     } finally {
@@ -168,7 +189,10 @@ export default function ProjectDetailPage() {
     try {
       await api.deleteMemory(row.id);
       toast.success("Memory deleted.");
-      setRows((cur) => cur?.filter((r) => r.id !== row.id) ?? cur);
+      // Drop it from the visible search hits, and re-fetch the browse list so
+      // its cached copy loses the row too.
+      setSearchRows((cur) => cur?.filter((r) => r.id !== row.id) ?? cur);
+      reloadMemories();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to delete memory.");
     }
@@ -209,13 +233,27 @@ export default function ProjectDetailPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{projectName ?? slug}</h1>
           <p className="font-mono text-xs text-muted-foreground">{slug}</p>
+          {/* Only while actually serving the cache; see the projects page. */}
+          {mode === "browse" && <CachedAt at={stale ? cachedAt : null} />}
         </div>
+        {/* Every action here writes or needs the server, so all are offline-gated. */}
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={viewContext}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={viewContext}
+            disabled={offline}
+            title={offline ? "Unavailable offline" : undefined}
+          >
             <FileText className="mr-1 h-4 w-4" />
             View context
           </Button>
-          <Button size="sm" onClick={() => setCreating(true)}>
+          <Button
+            size="sm"
+            onClick={() => setCreating(true)}
+            disabled={offline}
+            title={offline ? "Unavailable offline" : undefined}
+          >
             <Plus className="mr-1 h-4 w-4" />
             New memory
           </Button>
@@ -233,11 +271,17 @@ export default function ProjectDetailPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") runSearch();
               }}
-              placeholder="Semantic search…"
+              placeholder={offline ? "Search needs a connection" : "Semantic search…"}
               className="w-64 pl-8"
+              disabled={offline}
             />
           </div>
-          <Button variant="secondary" size="sm" onClick={runSearch} disabled={searching}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={runSearch}
+            disabled={searching || offline}
+          >
             {searching ? "Searching…" : "Search"}
           </Button>
           {mode === "search" && (
@@ -265,13 +309,23 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Table */}
-      {rows === null ? (
+      {loading ? (
         <div className="space-y-2">
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
-      ) : rows.length === 0 ? (
+      ) : mode === "browse" && browseError !== null ? (
+        // Unreachable server AND no cached copy of this view — the only state
+        // with genuinely nothing to render.
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed py-12 text-center">
+          <CloudOff className="h-8 w-8 text-muted-foreground" />
+          <p className="max-w-sm text-sm text-muted-foreground">{browseError}</p>
+          <Button variant="outline" size="sm" onClick={reloadMemories}>
+            Try again
+          </Button>
+        </div>
+      ) : rows === null || rows.length === 0 ? (
         <p className="rounded-md border border-dashed py-12 text-center text-sm text-muted-foreground">
           {mode === "search"
             ? "No memories matched your search."
@@ -316,6 +370,8 @@ export default function ProjectDetailPage() {
                       className="h-8 w-8"
                       aria-label="Edit"
                       onClick={() => setEditing(row)}
+                      disabled={offline}
+                      title={offline ? "Read-only offline" : undefined}
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -325,6 +381,8 @@ export default function ProjectDetailPage() {
                       className="h-8 w-8 text-destructive"
                       aria-label="Delete"
                       onClick={() => removeMemory(row)}
+                      disabled={offline}
+                      title={offline ? "Read-only offline" : undefined}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -338,7 +396,14 @@ export default function ProjectDetailPage() {
 
       {/* Danger zone */}
       <div className="mt-10 border-t pt-6">
-        <Button variant="outline" size="sm" className="text-destructive" onClick={deleteProject}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive"
+          onClick={deleteProject}
+          disabled={offline}
+          title={offline ? "Unavailable offline" : undefined}
+        >
           <Trash2 className="mr-1 h-4 w-4" />
           Delete project
         </Button>

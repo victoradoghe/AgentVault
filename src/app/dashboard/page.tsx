@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, FolderOpen } from "lucide-react";
+import { Plus, FolderOpen, CloudOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,23 +21,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError, type ProjectSummary } from "@/lib/api/client";
+import { CachedAt } from "@/components/offline-banner";
+import { useOffline } from "@/components/offline-provider";
+import { cacheKeys } from "@/lib/offline/cache";
+import { useCachedQuery } from "@/lib/offline/use-cached-query";
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const { offline } = useOffline();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    api
-      .listProjects()
-      .then(setProjects)
-      .catch((err) => {
-        toast.error(err instanceof ApiError ? err.message : "Failed to load projects.");
-        setProjects([]);
-      });
-  }, []);
+  const fetchProjects = useCallback(() => api.listProjects(), []);
+  const {
+    data: projects,
+    cachedAt,
+    stale,
+    loading,
+    error,
+    refresh,
+  } = useCachedQuery<ProjectSummary[]>(cacheKeys.projects(), fetchProjects);
 
   const createProject = async () => {
     const trimmed = name.trim();
@@ -48,6 +52,7 @@ export default function ProjectsPage() {
       toast.success(`Created "${project.name}".`);
       setOpen(false);
       setName("");
+      refresh();
       router.push(`/dashboard/projects/${project.slug}`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to create project.");
@@ -64,10 +69,14 @@ export default function ProjectsPage() {
           <p className="text-sm text-muted-foreground">
             Each project is an isolated memory space — usually one per codebase.
           </p>
+          {/* Only worth saying while we're actually serving the cache —
+              otherwise it flickers on every warm load. */}
+          <CachedAt at={stale ? cachedAt : null} />
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button>
+            {/* Creating a project needs the server, so don't offer it offline. */}
+            <Button disabled={offline} title={offline ? "Unavailable offline" : undefined}>
               <Plus className="mr-1 h-4 w-4" />
               New project
             </Button>
@@ -102,13 +111,25 @@ export default function ProjectsPage() {
         </Dialog>
       </div>
 
-      {projects === null ? (
+      {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-28 w-full" />
           ))}
         </div>
-      ) : projects.length === 0 ? (
+      ) : error !== null ? (
+        // Nothing fetched and nothing cached — the one case with nothing to show.
+        <Card className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <CloudOff className="h-10 w-10 text-muted-foreground" />
+          <div>
+            <p className="font-medium">Couldn&apos;t load your projects</p>
+            <p className="max-w-sm text-sm text-muted-foreground">{error}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={refresh}>
+            Try again
+          </Button>
+        </Card>
+      ) : projects === null || projects.length === 0 ? (
         <Card className="flex flex-col items-center justify-center gap-3 py-16 text-center">
           <FolderOpen className="h-10 w-10 text-muted-foreground" />
           <div>

@@ -20,7 +20,8 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { AmcClient, AmcError, type Memory } from "./client.js";
+import { AmcError, type Memory } from "./client.js";
+import type { OfflineClient } from "./offline.js";
 
 /**
  * The closed memory taxonomy. This MUST stay in sync with the server's single
@@ -93,7 +94,36 @@ function headline(m: Memory): string {
   return `${m.title}${bits ? ` (${bits})` : ""}`;
 }
 
-export function registerTools(server: McpServer, client: AmcClient): void {
+/**
+ * Prefix marking a result as served from the offline cache.
+ *
+ * The agent has to know this: it is about to plan work against decisions that
+ * may have moved on, and it should say so to the user rather than presenting a
+ * three-day-old snapshot as the current state of the project. Kept to one line
+ * — it is paid for on every offline call, and the age is the part that matters.
+ */
+function offlineNote(cachedAt: number | null): string {
+  if (cachedAt === null) return "";
+  return `[offline — cached ${describeAge(cachedAt)}; the server may have newer memories]\n\n`;
+}
+
+/** Compact, human-readable age, e.g. "12m ago". */
+function describeAge(at: number): string {
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/** Trailing note about writes still waiting to sync. */
+function pendingNote(pending: number): string {
+  if (pending <= 0) return "";
+  return `\n(${pending} write${pending === 1 ? "" : "s"} queued locally, syncing when the connection returns.)`;
+}
+
+export function registerTools(server: McpServer, client: OfflineClient): void {
   server.registerTool(
     "list_projects",
     {
@@ -105,20 +135,21 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     },
     () =>
       guard(async () => {
-        const projects = await client.listProjects();
+        const { data: projects, cachedAt } = await client.listProjects();
         if (projects.length === 0) {
           return ok(
             "No projects yet. Create one in the AgentVault dashboard, then use its slug.",
           );
         }
         return ok(
-          projects
-            .map(
-              (p) =>
-                `${p.slug}  ${p.name}` +
-                (p.memoryCount !== undefined ? `  (${p.memoryCount})` : ""),
-            )
-            .join("\n"),
+          offlineNote(cachedAt) +
+            projects
+              .map(
+                (p) =>
+                  `${p.slug}  ${p.name}` +
+                  (p.memoryCount !== undefined ? `  (${p.memoryCount})` : ""),
+              )
+              .join("\n"),
         );
       }),
   );
@@ -137,13 +168,13 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     },
     ({ project_slug }) =>
       guard(async () => {
-        const markdown = await client.getProjectContext(project_slug);
+        const { data: markdown, cachedAt } = await client.getProjectContext(project_slug);
         if (!markdown.trim()) {
           return ok(
             `Project "${project_slug}" has no memories yet. Use save_memory as decisions are made.`,
           );
         }
-        return ok(markdown);
+        return ok(offlineNote(cachedAt) + markdown);
       }),
   );
 
@@ -163,17 +194,34 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     },
     ({ project_slug, query, limit }) =>
       guard(async () => {
-        const results = await client.searchMemory(project_slug, query, limit);
+        const { data: results, cachedAt, degraded } = await client.searchMemory(
+          project_slug,
+          query,
+          limit,
+        );
+
+        // Offline search is a keyword scan, not the server's vector search, so
+        // say so: an agent that assumes semantic matching would read an empty
+        // result as "nothing relevant exists" rather than "no literal match".
+        const header = degraded
+          ? `[offline — keyword search over memories cached ${describeAge(cachedAt ?? Date.now())}; ` +
+            `not semantic, so phrasing matters]\n\n`
+          : offlineNote(cachedAt);
+
         if (results.length === 0) {
-          return ok(`No memories matched "${query}" in "${project_slug}".`);
+          return ok(
+            `${header}No memories matched "${query}" in "${project_slug}".` +
+              (degraded ? " Try different words, or get_project_context for everything cached." : ""),
+          );
         }
         return ok(
-          results
-            .map((m) => {
-              const score = m.score !== undefined ? `[${m.score.toFixed(2)}] ` : "";
-              return `${score}${headline(m)}\n${snippet(m.content)}\nid: ${m.id}`;
-            })
-            .join("\n\n"),
+          header +
+            results
+              .map((m) => {
+                const score = m.score !== undefined ? `[${m.score.toFixed(2)}] ` : "";
+                return `${score}${headline(m)}\n${snippet(m.content)}\nid: ${m.id}`;
+              })
+              .join("\n\n"),
         );
       }),
   );
@@ -203,14 +251,30 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     },
     ({ project_slug, title, content, category, importance }) =>
       guard(async () => {
-        const saved = await client.saveMemory({
+        const outcome = await client.saveMemory({
           projectSlug: project_slug,
           title,
           content,
           category,
           importance,
         });
-        return ok(`Saved "${saved.title ?? title}"${saved.id ? ` (${saved.id})` : ""}.`);
+
+        if (outcome.status === "queued") {
+          // Explicitly a success, not an error: the memory is durably on disk
+          // and will sync. Saying "failed" here invites the agent to retry and
+          // create duplicates, or to give up and drop the fact entirely.
+          return ok(
+            `Saved "${title}" locally (${outcome.localId}) — the server is unreachable, ` +
+              `so it is queued and will sync automatically on the next successful call. ` +
+              `No need to retry.${pendingNote(outcome.pending - 1)}`,
+          );
+        }
+
+        const saved = outcome.memory;
+        return ok(
+          `Saved "${saved?.title ?? title}"${saved?.id ? ` (${saved.id})` : ""}.` +
+            pendingNote(outcome.pending),
+        );
       }),
   );
 
@@ -229,13 +293,19 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     },
     ({ project_slug, category }) =>
       guard(async () => {
-        const memories = await client.listMemories(project_slug, category);
+        const { data: memories, cachedAt } = await client.listMemories(
+          project_slug,
+          category,
+        );
         if (memories.length === 0) {
           return ok(
-            `No memories${category ? ` in "${category}"` : ""} for "${project_slug}".`,
+            `${offlineNote(cachedAt)}No memories${category ? ` in "${category}"` : ""} for "${project_slug}".`,
           );
         }
-        return ok(memories.map((m) => `${m.id}  ${headline(m)}`).join("\n"));
+        return ok(
+          offlineNote(cachedAt) +
+            memories.map((m) => `${m.id}  ${headline(m)}`).join("\n"),
+        );
       }),
   );
 
@@ -252,8 +322,20 @@ export function registerTools(server: McpServer, client: AmcClient): void {
     },
     ({ memory_id }) =>
       guard(async () => {
-        await client.deleteMemory(memory_id);
-        return ok(`Deleted ${memory_id}.`);
+        const outcome = await client.deleteMemory(memory_id);
+
+        if (outcome.status === "unqueued") {
+          return ok(
+            `Discarded ${memory_id} — it was still queued offline, so it never reached the server.`,
+          );
+        }
+        if (outcome.status === "queued") {
+          return ok(
+            `Queued the deletion of ${memory_id} — the server is unreachable. It will be ` +
+              `applied automatically on the next successful call.${pendingNote(outcome.pending - 1)}`,
+          );
+        }
+        return ok(`Deleted ${memory_id}.${pendingNote(outcome.pending)}`);
       }),
   );
 }

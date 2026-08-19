@@ -36,6 +36,7 @@ The server is configured entirely through environment variables:
 | --- | --- | --- | --- |
 | `AMC_API_KEY` | ✅ | — | Your AgentVault API key (`amc_…`). Sent as a Bearer token. |
 | `AMC_BASE_URL` | — | `https://agent-memory-cloud.vercel.app` | Override to point at a local dev server, e.g. `http://localhost:3000`. |
+| `AMC_REQUEST_TIMEOUT_MS` | — | `90000` | Per-request abort budget. Raise it if saves time out against a slow or distant server. |
 
 ---
 
@@ -147,6 +148,7 @@ claude mcp add amc-local \
 - **`AMC_API_KEY is not set`** — the env var is missing from your MCP config. Add it and restart your agent.
 - **`Authentication failed (401)`** — the key is wrong, revoked, or malformed. Generate a new one in the dashboard.
 - **`Could not reach the AgentVault API …`** — the server is unreachable. Check `AMC_BASE_URL` and your connection; this error is transient and safe to retry.
+- **`… timed out after 90s`** — the server accepted the request but was still working. The first `save_memory` after a cold start is the slow one: the server loads the embedding model (~20s) before writing. Note the write usually *completes* server-side even when the client gives up, so check with `list_memories` before saving again — otherwise you get a duplicate. Raise `AMC_REQUEST_TIMEOUT_MS` if it keeps happening.
 
 ## License
 

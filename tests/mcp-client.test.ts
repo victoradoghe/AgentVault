@@ -9,7 +9,15 @@ import { AmcClient, AmcError } from "../packages/amc-mcp/src/client";
  * failures into messages that tell the user what to actually do.
  */
 
-const config = { baseUrl: "https://amc.test", apiKey: "amc_test_key" };
+const config = {
+  baseUrl: "https://amc.test",
+  apiKey: "amc_test_key",
+  requestTimeoutMs: 60_000,
+  // The HTTP client ignores both, but they are part of AmcConfig — the offline
+  // cache and queue are exercised in mcp-offline.test.ts.
+  cacheDir: "",
+  offlineEnabled: false,
+};
 
 function client() {
   return new AmcClient(config);

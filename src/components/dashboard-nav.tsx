@@ -7,6 +7,8 @@ import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LOCAL_USER_STORAGE_KEY } from "@/lib/auth-mode";
+import { clearCache } from "@/lib/offline/cache";
+import { clearServiceWorkerCache } from "@/components/service-worker";
 import { signOut } from "@/app/dashboard/actions";
 
 const LINKS = [
@@ -54,6 +56,10 @@ export function DashboardNav({ email }: { email: string | null }) {
               } catch {
                 // ignore
               }
+              // Signing out must also take the offline copies with it, or the
+              // next person at this machine can read the memories offline.
+              clearCache();
+              clearServiceWorkerCache();
             }}
           >
             <Button type="submit" variant="ghost" size="sm">

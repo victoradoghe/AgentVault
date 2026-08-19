@@ -42,6 +42,8 @@ key, no per-token embedding cost, no memory content leaving your infrastructure.
   in [`src/lib/categories.ts`](src/lib/categories.ts) and enforced everywhere.
 - **Per-user isolation** — every query is scoped to the acting user; a
   cross-user id returns "not found" rather than leaking existence.
+- **Readable offline** — the dashboard keeps a local copy of what your connected
+  agents have saved, so you can still read it with no connection. See below.
 
 ## Quick start
 
@@ -65,15 +67,28 @@ parses as a valid URL.
 
 ### Authentication
 
-AgentVault runs in one of two auth modes, chosen automatically:
+AgentVault resolves to one of three auth modes, chosen automatically:
 
 | Mode | When | Behaviour |
 | --- | --- | --- |
-| **Local** | Supabase env vars unset | "Log in" with any email, no password. Session is an HMAC-signed cookie. Development only. |
-| **Supabase** | `NEXT_PUBLIC_SUPABASE_*` set | Real Supabase Auth (email + password). |
+| **Supabase** | `NEXT_PUBLIC_SUPABASE_*` set | Real Supabase Auth (email + password). The only mode fit for production. |
+| **Local** | Supabase vars unset, **and not a production build** | "Log in" with any email, no password. Session is an HMAC-signed cookie. Development only. |
+| **Unconfigured** | Supabase vars unset **in production** | Nobody can sign in. The login page says what's missing. |
 
 Filling in the Supabase variables switches the entire app over — no code change.
 See [`src/lib/auth-mode.ts`](src/lib/auth-mode.ts).
+
+**Local mode is an authentication bypass by design** — no password, so anyone
+who can reach the app can claim any email and read that user's memories. That is
+fine on a laptop and unacceptable on a public host, so a production build will
+not fall back to it: a deploy that forgets a Supabase variable fails closed
+(nobody signs in) instead of silently opening up. To run it in production anyway
+— only sensible behind a private network — set both
+`NEXT_PUBLIC_AMC_ALLOW_LOCAL_AUTH=true` and `AMC_LOCAL_AUTH_SECRET`. The
+committed dev signing secret is refused in production, because with it any
+visitor could forge a session cookie for any account.
+
+`pnpm verify` checks all of this and fails with the specific fix.
 
 ## Connecting an agent
 
@@ -102,17 +117,60 @@ Codex CLI and OpenCode configs are in [`packages/amc-mcp/README.md`](packages/am
 The agent then has six tools: `list_projects`, `get_project_context`,
 `search_memory`, `save_memory`, `list_memories`, and `delete_memory`.
 
+## Offline access
+
+The memories your agents saved are exactly what you want to read on a train with
+no signal, so the dashboard is readable without a connection. Two layers make
+that work, and both are needed:
+
+| Layer | What it holds | Where |
+| --- | --- | --- |
+| Data cache | Every successful project/memory list, per user | `localStorage` — [`src/lib/offline/cache.ts`](src/lib/offline/cache.ts) |
+| App shell | The page HTML and Next's build assets | Cache Storage — [`public/sw.js`](public/sw.js) |
+
+The data cache alone isn't enough: it can only help once the page is running,
+and the page can't run if the browser couldn't fetch its HTML. The service
+worker serves the shell, the page boots, and the cached rows paint on the first
+frame.
+
+**What you get offline**: the project list, each project's memories, categories,
+importance, and content — everything except the actions that need a server.
+Creating, editing, and deleting are disabled, and semantic search is too (it
+runs the embedding model server-side). A banner names the state and each view
+says when its copy was captured.
+
+Three details worth knowing:
+
+- **"Offline" means the API is unreachable**, not `navigator.onLine` — that flag
+  is `true` on a captive-portal wifi and says nothing about our server. The real
+  signal is the last request: no response at all means offline, while an HTTP
+  error (even a 500) proves we got through.
+- **Cached data is scoped per user and cleared on sign-out**, along with the
+  service worker's pages. A shared machine must not keep the previous account's
+  memories readable.
+- **`/api/*` is never cached by the service worker.** Those responses are
+  per-user and authenticated; replaying them from a shared cache is how one
+  account ends up seeing another's data. They live only in the namespaced
+  `localStorage` cache.
+
+The service worker registers in production builds only — it serves
+`/_next/static/*` cache-first, which is correct for content-hashed output and
+would hand a dev server stale chunks. `pnpm dev` actively unregisters it.
+
 ## Environment variables
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | ✅ | Pooled Postgres connection (app runtime). Keep `?pgbouncer=true` on Supabase. |
 | `DIRECT_URL` | ✅ | Direct Postgres connection (migrations only). |
-| `NEXT_PUBLIC_SUPABASE_URL` | — | Enables Supabase auth. Blank → local auth mode. |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | — | Browser-safe public key. Supabase's current name for it. |
+| `NEXT_PUBLIC_SUPABASE_URL` | prod | Enables Supabase auth. Blank in dev → local auth mode; blank in production → nobody can sign in. |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | prod | Browser-safe public key. Supabase's current name for it. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | The older name for the same key. Either variable works — see [`src/lib/supabase/keys.ts`](src/lib/supabase/keys.ts). |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Server-only, optional. Nothing reads it today. Never expose to the browser. |
-| `AMC_LOCAL_AUTH_SECRET` | — | Signs local-mode session cookies. Dev fallback if unset. |
+| `AMC_LOCAL_AUTH_SECRET` | — | Signs local-mode session cookies. Dev fallback if unset; **required** if local mode is enabled in production. |
+| `NEXT_PUBLIC_AMC_ALLOW_LOCAL_AUTH` | — | Set to `true` to permit passwordless local auth in a production build. Off by default — read the auth section first. |
+| `AMC_DB_TRANSACTION_MAX_WAIT_MS` | — | Transaction acquire budget (default 20s). Tighten for a local database. |
+| `AMC_DB_TRANSACTION_TIMEOUT_MS` | — | Transaction run budget (default 60s). |
 | `HF_ENDPOINT` | — | Mirror host for the embedding model on restricted networks. |
 
 Nothing in [`src/lib/env.ts`](src/lib/env.ts) throws at import: the app boots
@@ -123,7 +181,7 @@ DB-backed routes return a clear `503 Database not configured`.
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Dev server (Turbopack). |
+| `pnpm dev` | Dev server. **Webpack, not Turbopack** — see below. |
 | `pnpm build` | Production build. **Webpack, not Turbopack** — see below. |
 | `pnpm test` | Unit tests (Vitest). No database or network needed. |
 | `pnpm test:watch` | Tests in watch mode. |
@@ -146,8 +204,10 @@ src/
   lib/
     categories.ts         The memory taxonomy (single source of truth)
     validation.ts  env.ts  auth-mode.ts  prisma.ts
+    offline/              Local cache + read-through hook (offline reads)
 packages/amc-mcp/         The MCP server (thin REST client, publishable)
 prisma/                   Schema + pgvector.sql
+public/sw.js              Service worker — serves the app shell offline
 tests/                    Vitest unit tests
 docs/API.md               Full REST + taxonomy + context reference
 ```
@@ -160,15 +220,16 @@ API and MCP server get identical behaviour and identical ownership checks. See
 ## Testing
 
 ```bash
-pnpm test      # 82 unit tests, no I/O
+pnpm test      # 124 unit tests, no I/O
 pnpm verify    # end-to-end, needs a live database
 ```
 
 The unit suite covers the pure logic — context packing and token budgeting, the
 category taxonomy's invariants, input validation, slug generation, session-token
-signing and tamper rejection, and the MCP client's envelope unwrapping and error
-mapping. Anything requiring real Postgres or the embedding model is covered by
-`pnpm verify` instead.
+signing and tamper rejection, auth-mode resolution and its production
+fail-closed rules, the offline cache's per-user isolation, and the MCP client's
+envelope unwrapping and error mapping. Anything requiring real Postgres or the
+embedding model is covered by `pnpm verify` instead.
 
 ## Deployment
 
@@ -176,10 +237,17 @@ Deploys to Vercel as a standard Next.js app. Two things to know:
 
 - **Set `DATABASE_URL`, `DIRECT_URL`, and the Supabase variables** in the host's
   environment, then run `pnpm db:setup` once against the production database.
-- **The build uses webpack, not Turbopack.** `next build --turbopack` fails
-  collecting page data for the dynamic API routes
-  (`PageNotFoundError: Cannot find module for page: /api/...`). `dev` still uses
-  Turbopack and is fine. Don't "restore" `--turbopack` to the build script.
+  The Supabase variables are not optional in production: without them the app
+  has no way to authenticate anyone (see [Authentication](#authentication)).
+- **Both `dev` and `build` use webpack, not Turbopack.** `next build --turbopack`
+  fails collecting page data for the dynamic API routes
+  (`PageNotFoundError: Cannot find module for page: /api/...`). `next dev
+  --turbopack` is broken too, but only on the routes that embed text: the
+  request kills its worker (`Jest worker encountered 2 child process
+  exceptions`), so `save_memory` and `get_project_context` return a 500 HTML
+  error page. The write often lands before the worker dies, which makes it look
+  like a client timeout rather than a crash. Don't "restore" `--turbopack` to
+  either script.
 
 The native embedding dependencies (`@xenova/transformers`, `onnxruntime-node`,
 `sharp`) are listed in `serverExternalPackages` in

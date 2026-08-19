@@ -47,29 +47,38 @@ export interface Project {
  * Error the tools can render as a clean message. `retriable` distinguishes
  * transient network/5xx failures (worth retrying) from client errors like a
  * bad API key (not worth retrying).
+ *
+ * `offline` is narrower and drives the offline fallback: it is set only when
+ * the request never got a response at all (DNS, refused connection, timeout).
+ * A 500 is retriable but NOT offline — the server answered, so falling back to
+ * a cached copy would be hiding a real server-side bug behind stale data.
  */
 export class AmcError extends Error {
   readonly status?: number;
   readonly retriable: boolean;
+  readonly offline: boolean;
 
-  constructor(message: string, opts: { status?: number; retriable?: boolean } = {}) {
+  constructor(
+    message: string,
+    opts: { status?: number; retriable?: boolean; offline?: boolean } = {},
+  ) {
     super(message);
     this.name = "AmcError";
     this.status = opts.status;
     this.retriable = opts.retriable ?? false;
+    this.offline = opts.offline ?? false;
   }
 }
-
-/** How long to wait before aborting a request, in milliseconds. */
-const REQUEST_TIMEOUT_MS = 20_000;
 
 export class AmcClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(config: AmcConfig) {
     this.baseUrl = config.baseUrl;
     this.apiKey = config.apiKey;
+    this.requestTimeoutMs = config.requestTimeoutMs;
   }
 
   // ---- Public API -------------------------------------------------------
@@ -150,7 +159,7 @@ export class AmcClient {
     if (opts.json !== undefined) headers["Content-Type"] = "application/json";
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
 
     let res: Response;
     try {
@@ -164,14 +173,15 @@ export class AmcClient {
       // Network-level failure (DNS, connection refused, timeout, offline).
       const reason =
         err instanceof Error && err.name === "AbortError"
-          ? `timed out after ${REQUEST_TIMEOUT_MS / 1000}s`
+          ? `timed out after ${this.requestTimeoutMs / 1000}s — if saves are ` +
+            `legitimately slow, raise AMC_REQUEST_TIMEOUT_MS`
           : err instanceof Error
             ? err.message
             : "unknown network error";
       throw new AmcError(
         `Could not reach the AgentVault API at ${this.baseUrl} (${reason}). ` +
           `Check AMC_BASE_URL and your connection, then try again.`,
-        { retriable: true },
+        { retriable: true, offline: true },
       );
     } finally {
       clearTimeout(timeout);

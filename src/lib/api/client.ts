@@ -139,10 +139,31 @@ export const api = {
       `/api/projects/${encodeURIComponent(slug)}/search?${params.toString()}`,
     ).then((r) => r.results);
   },
-  getContext: (slug: string) =>
-    fetch(`/api/projects/${encodeURIComponent(slug)}/context`, {
+  /**
+   * The context bundle, as raw markdown.
+   *
+   * This is the one endpoint that doesn't return JSON, so it bypasses
+   * `request()` — but it must still check the status. Errors come back as a
+   * JSON `{ error }` envelope, and reading the body unconditionally would
+   * render "Authentication required." into the dialog as though it were the
+   * project's context.
+   */
+  getContext: async (slug: string): Promise<string> => {
+    const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/context`, {
       headers: { Accept: "text/markdown" },
-    }).then((r) => r.text()),
+    });
+    const text = await res.text();
+
+    if (!res.ok) {
+      const body = text ? safeJson(text) : null;
+      const message =
+        (body && typeof body === "object" && "error" in body
+          ? String((body as { error: unknown }).error)
+          : null) ?? `Request failed (${res.status}).`;
+      throw new ApiError(res.status, message);
+    }
+    return text;
+  },
 
   // API keys
   listKeys: () => request<{ keys: ApiKeySummary[] }>("/api/keys").then((r) => r.keys),
