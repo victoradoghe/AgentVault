@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import {
   env as transformersEnv,
   pipeline,
@@ -10,6 +13,69 @@ import {
 const HF_ENDPOINT = process.env.HF_ENDPOINT?.trim();
 if (HF_ENDPOINT) {
   transformersEnv.remoteHost = HF_ENDPOINT;
+}
+
+/**
+ * Where the ~90 MB model file lives between runs.
+ *
+ * transformers.js defaults this to a `.cache` directory *inside* `node_modules`,
+ * which quietly makes offline support a lie: `pnpm install`, a lockfile change,
+ * or a dependency bump relocates or deletes that directory, and the next save
+ * with no connection fails because the model has to be re-downloaded. Pinning
+ * the cache outside `node_modules` means the model is fetched once per machine
+ * and survives everything the package manager does.
+ *
+ * Override with AMC_MODEL_CACHE_DIR to share one copy between checkouts, or to
+ * bake the model into a container image at a known path.
+ */
+const MODEL_CACHE_DIR =
+  process.env.AMC_MODEL_CACHE_DIR?.trim() || path.join(process.cwd(), ".model-cache");
+
+// Captured before the override so an existing download can be reused rather
+// than re-fetched — see `seedCacheFromNodeModules`.
+const NODE_MODULES_CACHE_DIR = transformersEnv.cacheDir;
+
+transformersEnv.cacheDir = MODEL_CACHE_DIR;
+
+/** Path a given model occupies inside a cache directory. */
+function modelPathIn(cacheDir: string): string {
+  return path.join(cacheDir, ...EMBEDDING_MODEL.split("/"));
+}
+
+/**
+ * One-time migration for installs that already downloaded the model into
+ * `node_modules` under the old default. Copying is far cheaper than a 90 MB
+ * re-download and, critically, it works with no connection — which is exactly
+ * the situation this whole change exists to survive.
+ */
+function seedCacheFromNodeModules(): void {
+  try {
+    if (fs.existsSync(modelPathIn(MODEL_CACHE_DIR))) return;
+    if (!NODE_MODULES_CACHE_DIR) return;
+
+    const legacy = modelPathIn(NODE_MODULES_CACHE_DIR);
+    if (!fs.existsSync(legacy)) return;
+
+    fs.mkdirSync(path.dirname(modelPathIn(MODEL_CACHE_DIR)), { recursive: true });
+    fs.cpSync(legacy, modelPathIn(MODEL_CACHE_DIR), { recursive: true });
+  } catch {
+    // A failed copy just means the model gets downloaded again when online.
+    // Never let a cache optimisation break embedding.
+  }
+}
+
+/** True when the model is already on disk, so `embed()` needs no network. */
+export function isModelCached(): boolean {
+  try {
+    return fs.existsSync(modelPathIn(MODEL_CACHE_DIR));
+  } catch {
+    return false;
+  }
+}
+
+/** Where the model is cached. Surfaced by `pnpm verify` and `pnpm model:fetch`. */
+export function modelCacheDir(): string {
+  return MODEL_CACHE_DIR;
 }
 
 /**
@@ -43,10 +109,30 @@ const globalForEmbeddings = globalThis as unknown as {
  * instead of kicking off several.
  */
 function getExtractor(): Promise<FeatureExtractionPipeline> {
-  globalForEmbeddings.__amcExtractor ??= pipeline(
-    "feature-extraction",
-    EMBEDDING_MODEL
-  );
+  globalForEmbeddings.__amcExtractor ??= (async () => {
+    seedCacheFromNodeModules();
+    const cold = !isModelCached();
+
+    try {
+      return await pipeline("feature-extraction", EMBEDDING_MODEL);
+    } catch (err) {
+      // A cold cache plus no network is the one failure a user can actually
+      // act on, and transformers.js reports it as a bare fetch error that says
+      // nothing about what to do. Name the cause and the fix.
+      globalForEmbeddings.__amcExtractor = undefined;
+      if (cold) {
+        throw new Error(
+          `Could not load the embedding model "${EMBEDDING_MODEL}". It is not cached ` +
+            `at ${MODEL_CACHE_DIR} and could not be downloaded — this usually means no ` +
+            `internet connection. Run "pnpm model:fetch" once while online; after that, ` +
+            `saving and searching memories works offline. ` +
+            `(Underlying error: ${err instanceof Error ? err.message : String(err)})`,
+          { cause: err },
+        );
+      }
+      throw err;
+    }
+  })();
   return globalForEmbeddings.__amcExtractor;
 }
 

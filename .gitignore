@@ -47,3 +47,6 @@ next-env.d.ts
 
 # demo build output
 .demo-build
+
+# embedding model cache (~90 MB, machine-local; run `pnpm model:fetch`)
+/.model-cache
