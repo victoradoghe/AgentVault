@@ -42,6 +42,17 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: emptyToUndefined(
     z.string().min(1).optional().catch(undefined),
   ),
+
+  // Interactive-transaction budgets, in milliseconds. Overrides exist because
+  // the right value depends entirely on how far away the database is: a local
+  // Postgres wants Prisma's tight defaults, while a pooler in another region
+  // needs seconds just to acquire a connection. See prisma.ts for the defaults.
+  AMC_DB_TRANSACTION_MAX_WAIT_MS: emptyToUndefined(
+    z.coerce.number().int().positive().optional().catch(undefined),
+  ),
+  AMC_DB_TRANSACTION_TIMEOUT_MS: emptyToUndefined(
+    z.coerce.number().int().positive().optional().catch(undefined),
+  ),
 });
 
 // Reference NEXT_PUBLIC_* statically so Next.js inlines them for the browser.
@@ -53,6 +64,8 @@ const parsed = envSchema.safeParse({
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  AMC_DB_TRANSACTION_MAX_WAIT_MS: process.env.AMC_DB_TRANSACTION_MAX_WAIT_MS,
+  AMC_DB_TRANSACTION_TIMEOUT_MS: process.env.AMC_DB_TRANSACTION_TIMEOUT_MS,
 });
 
 if (!parsed.success) {
