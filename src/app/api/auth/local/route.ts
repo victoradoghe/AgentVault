@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 import { created, errorResponse, handleError, noContent } from "@/lib/api/http";
-import { isLocalAuthMode, LOCAL_SESSION_COOKIE } from "@/lib/auth-mode";
+import {
+  isLocalAuthMode,
+  isSupabaseConfigured,
+  LOCAL_SESSION_COOKIE,
+} from "@/lib/auth-mode";
 import { createLocalSessionToken } from "@/server/localSession";
 
 export const runtime = "nodejs";
@@ -27,12 +31,35 @@ const MAX_AGE = 60 * 60 * 24 * 30;
 export async function POST(req: Request) {
   try {
     if (!isLocalAuthMode()) {
-      return errorResponse(404, "Local auth is disabled (Supabase is configured).");
+      // Either Supabase is configured (use it), or local mode isn't permitted
+      // here — in production it must be opted into explicitly. Both mean this
+      // passwordless endpoint must not mint a session.
+      return errorResponse(
+        404,
+        isSupabaseConfigured()
+          ? "Local auth is disabled (Supabase is configured)."
+          : "Local auth is disabled in production. " +
+              "Configure Supabase auth, or set NEXT_PUBLIC_AMC_ALLOW_LOCAL_AUTH=true " +
+              "to allow passwordless sign-in anyway.",
+      );
     }
 
     const raw = await req.json().catch(() => ({}));
     const { email } = bodySchema.parse(raw);
-    const token = createLocalSessionToken(email);
+
+    // Throws when local mode is enabled in production without its own signing
+    // secret. That is a deployment mistake, not a user error, so say so plainly
+    // instead of letting it become a generic 500.
+    let token: string;
+    try {
+      token = createLocalSessionToken(email);
+    } catch {
+      return errorResponse(
+        500,
+        "Local auth is enabled but AMC_LOCAL_AUTH_SECRET is not set. " +
+          "Set it, or configure Supabase auth instead.",
+      );
+    }
 
     const res = created({ user: { email: email.trim().toLowerCase() } });
     res.cookies.set(LOCAL_SESSION_COOKIE, token, {

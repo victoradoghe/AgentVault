@@ -21,9 +21,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import {
+  AUTH_UNCONFIGURED_MESSAGE,
+  isAuthUnconfigured,
   isSupabaseConfigured,
   LOCAL_USER_STORAGE_KEY,
 } from "@/lib/auth-mode";
+import { resolveNextPath } from "@/lib/redirects";
 
 interface Credentials {
   email: string;
@@ -46,6 +49,7 @@ export function AuthForm({ mode }: AuthFormProps) {
   const [submitting, setSubmitting] = useState(false);
 
   const supabaseMode = isSupabaseConfigured();
+  const unconfigured = isAuthUnconfigured();
 
   // One stable shape (password always optional); the 8-char rule only applies in
   // Supabase mode. Keeping the shape constant keeps the resolver types clean.
@@ -74,13 +78,17 @@ export function AuthForm({ mode }: AuthFormProps) {
   });
 
   const isLogin = mode === "login";
-  const next = searchParams.get("next") || "/dashboard";
+  const next = resolveNextPath(searchParams.get("next"));
 
   const onSubmit = async ({ email, password }: Credentials) => {
     setSubmitting(true);
     try {
       // --- Local dev mode: no Supabase, no password. ---
       if (!supabaseMode) {
+        // The server would reject this anyway (the route 404s outside local
+        // mode); refusing here keeps the error honest instead of cryptic.
+        if (unconfigured) throw new Error(AUTH_UNCONFIGURED_MESSAGE);
+
         const res = await fetch("/api/auth/local", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -137,6 +145,24 @@ export function AuthForm({ mode }: AuthFormProps) {
       setSubmitting(false);
     }
   };
+
+  // No auth backend at all. Show the operator what to set rather than a form
+  // that cannot possibly succeed.
+  if (unconfigured) {
+    return (
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle className="text-2xl">Sign-in unavailable</CardTitle>
+          <CardDescription>This deployment has no authentication configured.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="rounded-md border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {AUTH_UNCONFIGURED_MESSAGE}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="w-full max-w-sm">

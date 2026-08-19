@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createLocalSessionToken,
@@ -77,3 +79,52 @@ describe("verifyLocalSessionToken", () => {
     expect(verifyLocalSessionToken(`${payload}.short`)).toBeNull();
   });
 });
+
+/**
+ * In production the committed dev fallback secret must never be used: it is
+ * public source, so signing with it means anyone can mint a cookie for any
+ * email. Both directions have to fail closed — refusing to issue tokens is not
+ * enough if previously-issued (or forged) ones still verify.
+ */
+describe("production without AMC_LOCAL_AUTH_SECRET", () => {
+  const ORIGINAL_SECRET = process.env.AMC_LOCAL_AUTH_SECRET;
+
+  beforeEach(() => {
+    delete process.env.AMC_LOCAL_AUTH_SECRET;
+    vi.stubEnv("NODE_ENV", "production");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (ORIGINAL_SECRET === undefined) delete process.env.AMC_LOCAL_AUTH_SECRET;
+    else process.env.AMC_LOCAL_AUTH_SECRET = ORIGINAL_SECRET;
+  });
+
+  it("refuses to issue a token rather than signing with the public fallback", () => {
+    expect(() => createLocalSessionToken("dev@example.com")).toThrow(
+      /AMC_LOCAL_AUTH_SECRET/,
+    );
+  });
+
+  it("rejects a token forged with the committed fallback secret", () => {
+    // Exactly what an attacker who read the source would send.
+    const forged = createHmacToken("victim@example.com", "amc-local-dev-auth-secret-change-me");
+
+    expect(verifyLocalSessionToken(forged)).toBeNull();
+  });
+
+  it("accepts tokens again once a real secret is configured", () => {
+    process.env.AMC_LOCAL_AUTH_SECRET = "a-real-production-secret";
+
+    expect(verifyLocalSessionToken(createLocalSessionToken("dev@example.com"))).toBe(
+      "dev@example.com",
+    );
+  });
+});
+
+/** Build a token the way the module does, but with a chosen key. */
+function createHmacToken(email: string, key: string): string {
+  const payload = Buffer.from(email.trim().toLowerCase()).toString("base64url");
+  const sig = createHmac("sha256", key).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}

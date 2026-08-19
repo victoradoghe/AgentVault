@@ -22,6 +22,7 @@
  */
 import "dotenv/config";
 
+import { getAuthMode } from "@/lib/auth-mode";
 import { prisma } from "@/lib/prisma";
 import { EMBEDDING_DIM, embed, warmupEmbeddings } from "@/server/embeddings";
 import { createMemory } from "@/server/memories";
@@ -50,6 +51,11 @@ function pass(message: string): void {
 
 function info(message: string): void {
   console.log(`     \x1b[2m${message}\x1b[0m`);
+}
+
+/** Not fatal, but the operator needs to see it. Yellow, and never indented away. */
+function warn(message: string): void {
+  console.log(`   \x1b[33m!\x1b[0m ${message}`);
 }
 
 /** A check failed in a way the user can fix. Carries the remedy with it. */
@@ -141,12 +147,53 @@ function checkEnv(): void {
     );
   }
 
-  // Supabase auth is optional: without it the app runs the local auth stopgap.
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()) {
+  checkAuthConfiguration();
+}
+
+/**
+ * Auth is the one setting where "unset" is dangerous rather than merely
+ * incomplete: local mode has no password, so a production deployment that falls
+ * back to it is readable by anyone who finds the URL. `getAuthMode()` refuses
+ * that fallback, which turns the risk into a locked-out deployment — still a
+ * failure, just a safe one. Either way the operator needs to hear about it
+ * here, before they ship.
+ */
+function checkAuthConfiguration(): void {
+  const mode = getAuthMode();
+
+  if (mode === "supabase") {
     pass("Supabase auth configured");
-  } else {
-    info("Supabase auth not configured — the app will use local auth mode.");
+    return;
   }
+
+  if (mode === "local") {
+    if (process.env.NODE_ENV === "production") {
+      // Explicitly opted in via NEXT_PUBLIC_AMC_ALLOW_LOCAL_AUTH.
+      warn(
+        "Local auth mode is enabled IN PRODUCTION. Anyone who can reach this " +
+          "deployment can sign in as any user, with no password. Configure " +
+          "Supabase auth unless this host is private.",
+      );
+      if (!process.env.AMC_LOCAL_AUTH_SECRET?.trim()) {
+        throw new VerifyError(
+          "Local auth is enabled in production but AMC_LOCAL_AUTH_SECRET is not set.",
+          "Session cookies would be signed with the committed development " +
+            "secret, so anyone could forge one for any account. Set " +
+            "AMC_LOCAL_AUTH_SECRET, or configure Supabase auth instead.",
+        );
+      }
+      return;
+    }
+    info("Supabase auth not configured — the app will use local auth mode (dev only).");
+    return;
+  }
+
+  throw new VerifyError(
+    "No authentication backend is configured, so nobody can sign in.",
+    "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY. " +
+      "(Passwordless local mode is refused in production unless you set " +
+      "NEXT_PUBLIC_AMC_ALLOW_LOCAL_AUTH=true and AMC_LOCAL_AUTH_SECRET.)",
+  );
 }
 
 // ---------------------------------------------------------------------------

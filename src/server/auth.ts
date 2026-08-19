@@ -3,7 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 
 import { prisma } from "@/lib/prisma";
-import { isLocalAuthMode, LOCAL_SESSION_COOKIE } from "@/lib/auth-mode";
+import { getAuthMode, LOCAL_SESSION_COOKIE } from "@/lib/auth-mode";
 import { createClient } from "@/lib/supabase/server";
 import { verifyLocalSessionToken } from "./localSession";
 
@@ -30,7 +30,15 @@ export interface LocalUser {
  * session cookie when Supabase isn't configured, otherwise the Supabase session.
  */
 export async function getSessionEmail(): Promise<string | null> {
-  if (isLocalAuthMode()) {
+  const mode = getAuthMode();
+
+  // No auth backend at all (see auth-mode.ts): nobody is signed in. Returning
+  // null here — rather than falling through to Supabase with undefined
+  // credentials — is what keeps the failure a clean "signed out" instead of a
+  // crash on every request.
+  if (mode === "unconfigured") return null;
+
+  if (mode === "local") {
     const store = await cookies();
     return verifyLocalSessionToken(store.get(LOCAL_SESSION_COOKIE)?.value);
   }
