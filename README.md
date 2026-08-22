@@ -42,8 +42,9 @@ key, no per-token embedding cost, no memory content leaving your infrastructure.
   in [`src/lib/categories.ts`](src/lib/categories.ts) and enforced everywhere.
 - **Per-user isolation** — every query is scoped to the acting user; a
   cross-user id returns "not found" rather than leaking existence.
-- **Readable offline** — the dashboard keeps a local copy of what your connected
-  agents have saved, so you can still read it with no connection. See below.
+- **Works offline** — agents keep reading cached memory and keep saving new ones
+  (queued on disk, synced on reconnect), and the dashboard stays readable with no
+  connection. See below.
 
 ## Quick start
 
@@ -119,9 +120,46 @@ The agent then has six tools: `list_projects`, `get_project_context`,
 
 ## Offline access
 
-The memories your agents saved are exactly what you want to read on a train with
-no signal, so the dashboard is readable without a connection. Two layers make
-that work, and both are needed:
+The memories your agents saved are exactly what you want when the connection
+isn't there, so AgentVault degrades rather than breaks. There are three
+independent pieces, because "offline" hits three different places:
+
+| If the connection drops… | What still works | Where |
+| --- | --- | --- |
+| …for **your agent** (MCP) | Reads serve the last cached copy; saves queue on disk and sync automatically | [`packages/amc-mcp/src/offline.ts`](packages/amc-mcp/src/offline.ts) |
+| …for **the dashboard** | Projects and memories stay readable; editing is disabled | [`src/lib/offline/cache.ts`](src/lib/offline/cache.ts) + [`public/sw.js`](public/sw.js) |
+| …for **the server itself** | Embedding still runs, from the locally cached model | [`src/server/embeddings.ts`](src/server/embeddings.ts) |
+
+### Agents keep working
+
+This is the one that matters most: an agent that loses a saved decision to a
+flaky connection has failed at the only job this product has. So `save_memory`
+**succeeds while offline** — the memory goes to a durable on-disk queue and is
+replayed, in order, on the next call that reaches the server. Reads fall back to
+the last cached copy, labelled with its age, and `search_memory` degrades to a
+keyword scan. Full details and the env vars are in
+[`packages/amc-mcp/README.md`](packages/amc-mcp/README.md#working-offline).
+
+Only a genuinely unreachable server triggers any of this: a 401 or a 500 means
+the server answered, and is reported as the error it is.
+
+### The embedding model must be local first
+
+Saving and searching embed text with a model that is downloaded once (~90 MB)
+and then runs entirely in-process. Prime it while you have a connection:
+
+```bash
+pnpm model:fetch
+```
+
+It is cached in `.model-cache/` (override with `AMC_MODEL_CACHE_DIR`) —
+deliberately **outside `node_modules`**, so that `pnpm install` doesn't silently
+delete your offline capability. Without this step, the first memory saved on a
+disconnected machine fails with a download error.
+
+### The dashboard stays readable
+
+Two layers make that work, and both are needed:
 
 | Layer | What it holds | Where |
 | --- | --- | --- |
@@ -172,6 +210,7 @@ would hand a dev server stale chunks. `pnpm dev` actively unregisters it.
 | `AMC_DB_TRANSACTION_MAX_WAIT_MS` | — | Transaction acquire budget (default 20s). Tighten for a local database. |
 | `AMC_DB_TRANSACTION_TIMEOUT_MS` | — | Transaction run budget (default 60s). |
 | `HF_ENDPOINT` | — | Mirror host for the embedding model on restricted networks. |
+| `AMC_MODEL_CACHE_DIR` | — | Where the embedding model is cached (default `.model-cache/`). Kept outside `node_modules` so a reinstall can't break offline embedding. |
 
 Nothing in [`src/lib/env.ts`](src/lib/env.ts) throws at import: the app boots
 without a database so local auth and the dashboard shell still work, and
@@ -188,6 +227,7 @@ DB-backed routes return a clear `503 Database not configured`.
 | `pnpm verify` | Full end-to-end stack verification against a live database. |
 | `pnpm db:setup` | `prisma db push` + apply `prisma/pgvector.sql`. |
 | `pnpm db:push` / `db:migrate` / `db:studio` | Standard Prisma commands. |
+| `pnpm model:fetch` | Download the embedding model so embedding works offline. Run once, while online. |
 | `pnpm smoke` | Dev-only service-layer walkthrough with printed output. |
 
 ## Project layout

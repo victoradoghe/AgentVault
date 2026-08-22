@@ -2,7 +2,9 @@
 
 **AgentVault** as an [MCP](https://modelcontextprotocol.io) server. It gives your coding agent (Claude Code, Codex CLI, OpenCode, …) **persistent, project-scoped memory**: load prior decisions at the start of a task, and save important ones as you go.
 
-This is a thin stdio client of the AgentVault REST API — it stores nothing locally and contains no database. All it needs is your **AgentVault API key**.
+This is a thin stdio client of the AgentVault REST API — it contains no database and no embedding model. All it needs is your **AgentVault API key**.
+
+**It keeps working when your connection doesn't.** Reads fall back to a local copy of what the server last returned, and memories saved offline are queued on disk and synced automatically when the connection comes back. See [Working offline](#working-offline).
 
 ## Tools
 
@@ -37,6 +39,40 @@ The server is configured entirely through environment variables:
 | `AMC_API_KEY` | ✅ | — | Your AgentVault API key (`amc_…`). Sent as a Bearer token. |
 | `AMC_BASE_URL` | — | `https://agent-memory-cloud.vercel.app` | Override to point at a local dev server, e.g. `http://localhost:3000`. |
 | `AMC_REQUEST_TIMEOUT_MS` | — | `90000` | Per-request abort budget. Raise it if saves time out against a slow or distant server. |
+| `AMC_CACHE_DIR` | — | `~/.agentvault` | Where the offline cache and the outbox live. |
+| `AMC_OFFLINE` | — | `1` | Set to `0` to disable the offline cache and queue entirely — every failure then surfaces as an error. |
+
+## Working offline
+
+A dropped connection degrades what the agent can *read*; it never loses what the
+agent *writes*.
+
+| Call | With no connection |
+| --- | --- |
+| `get_project_context` | Serves the last copy fetched for that project, prefixed with `[offline — cached 2h ago]`. |
+| `list_projects` / `list_memories` | Same: last successful response, labelled with its age. |
+| `search_memory` | Falls back to a **keyword** scan over the cached memories. Labelled, because it is not the server's semantic search — phrasing matters more. |
+| `save_memory` | **Succeeds.** The memory is written to a durable on-disk queue and reported as saved-locally, so the agent does not retry or discard it. |
+| `delete_memory` | Queued the same way. Deleting a memory that is itself still queued just drops it from the queue. |
+
+Queued writes are replayed, oldest first, on the next call that reaches the
+server — and on server start-up, so simply reopening your agent after getting
+back online syncs the backlog. Nothing needs to be run by hand.
+
+Three things worth knowing:
+
+- **Only a genuinely unreachable server triggers this.** A 401 or a 500 means
+  the server answered, so it surfaces as the error it is. Serving a cached copy
+  there would disguise a revoked API key as a working one.
+- **The cache is keyed to your API key and base URL**, so two accounts — or a
+  local dev server and the hosted one — never see each other's memories. The key
+  is hashed, not stored, in the directory name.
+- **A write the server later rejects is dropped, not retried forever** (e.g. the
+  project was deleted while you were offline). That is logged to stderr so the
+  loss is visible rather than silent.
+
+Cached data is plain JSON under `AMC_CACHE_DIR`. To clear it, delete that
+directory.
 
 ---
 
@@ -147,7 +183,9 @@ claude mcp add amc-local \
 
 - **`AMC_API_KEY is not set`** — the env var is missing from your MCP config. Add it and restart your agent.
 - **`Authentication failed (401)`** — the key is wrong, revoked, or malformed. Generate a new one in the dashboard.
-- **`Could not reach the AgentVault API …`** — the server is unreachable. Check `AMC_BASE_URL` and your connection; this error is transient and safe to retry.
+- **`Could not reach the AgentVault API …`** — the server is unreachable *and* nothing is cached for that call yet. Check `AMC_BASE_URL` and your connection. Once a project has been read online at least once, the same call serves the cached copy instead of failing.
+- **`Saved "…" locally`** — not an error. The server was unreachable, so the memory is queued on disk and will sync on the next successful call. Don't retry: retrying creates a duplicate.
+- **Memories saved offline haven't appeared** — they sync on the next call that reaches the server. Make any call (`list_projects` is cheapest) while online, and check stderr for `amc-mcp: synced N queued write(s)`. Queued files live in `AMC_CACHE_DIR/<namespace>/outbox/`.
 - **`… timed out after 90s`** — the server accepted the request but was still working. The first `save_memory` after a cold start is the slow one: the server loads the embedding model (~20s) before writing. Note the write usually *completes* server-side even when the client gives up, so check with `list_memories` before saving again — otherwise you get a duplicate. Raise `AMC_REQUEST_TIMEOUT_MS` if it keeps happening.
 
 ## License

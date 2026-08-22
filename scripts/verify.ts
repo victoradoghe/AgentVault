@@ -24,7 +24,13 @@ import "dotenv/config";
 
 import { getAuthMode } from "@/lib/auth-mode";
 import { prisma } from "@/lib/prisma";
-import { EMBEDDING_DIM, embed, warmupEmbeddings } from "@/server/embeddings";
+import {
+  EMBEDDING_DIM,
+  embed,
+  isModelCached,
+  modelCacheDir,
+  warmupEmbeddings,
+} from "@/server/embeddings";
 import { createMemory } from "@/server/memories";
 import { createProject } from "@/server/projects";
 import { getProjectContext, searchMemories } from "@/server/search";
@@ -287,7 +293,11 @@ async function checkPgVector(): Promise<void> {
 
 async function checkEmbeddings(): Promise<void> {
   step("Embedding model");
-  info("First run downloads ~90 MB from huggingface.co — this can take a minute.");
+
+  const wasCached = isModelCached();
+  if (!wasCached) {
+    info("First run downloads ~90 MB from huggingface.co — this can take a minute.");
+  }
 
   const started = Date.now();
   try {
@@ -311,6 +321,22 @@ async function checkEmbeddings(): Promise<void> {
   }
 
   pass(`Loaded and produced a ${vector.length}-d vector (${Date.now() - started}ms)`);
+
+  // Offline readiness is invisible until it fails, and it fails at the worst
+  // moment — someone saving a memory with no connection. Say it out loud here.
+  if (isModelCached()) {
+    pass(
+      wasCached
+        ? "Cached locally — embedding works with no internet connection"
+        : "Now cached locally — embedding will work with no internet connection",
+    );
+    info(modelCacheDir());
+  } else {
+    warn(
+      `The model did not land in ${modelCacheDir()}. Embedding will need the ` +
+        `network every run — check that directory is writable.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
