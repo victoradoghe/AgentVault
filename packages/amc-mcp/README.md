@@ -28,7 +28,8 @@ This is a thin stdio client of the AgentVault REST API — it contains no databa
 
 > **`npx -y amc-mcp` does not work yet** — this package is not published to npm.
 > Launch the built entrypoint by absolute path instead, as shown below. Build it once with
-> `pnpm --filter amc-mcp build`.
+> `pnpm --filter amc-mcp build`. (Publishing it is the only step needed to change that:
+> set `MCP_PACKAGE_NAME` on the app and the dashboard generates `npx` commands instead.)
 
 ## Configuration
 
@@ -37,7 +38,7 @@ The server is configured entirely through environment variables:
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `AMC_API_KEY` | ✅ | — | Your AgentVault API key (`amc_…`). Sent as a Bearer token. |
-| `AMC_BASE_URL` | — | `https://agent-memory-cloud.vercel.app` | Override to point at a local dev server, e.g. `http://localhost:3000`. |
+| `AMC_BASE_URL` | — | `http://127.0.0.1:3000` | Where AgentVault is served. AgentVault is self-hosted, so the default is a local server; point this at your own deployment if it runs elsewhere. |
 | `AMC_REQUEST_TIMEOUT_MS` | — | `90000` | Per-request abort budget. Raise it if saves time out against a slow or distant server. |
 | `AMC_CACHE_DIR` | — | `~/.agentvault` | Where the offline cache and the outbox live. |
 | `AMC_OFFLINE` | — | `1` | Set to `0` to disable the offline cache and queue entirely — every failure then surfaces as an error. |
@@ -51,13 +52,18 @@ agent *writes*.
 | --- | --- |
 | `get_project_context` | Serves the last copy fetched for that project, prefixed with `[offline — cached 2h ago]`. |
 | `list_projects` / `list_memories` | Same: last successful response, labelled with its age. |
-| `search_memory` | Falls back to a **keyword** scan over the cached memories. Labelled, because it is not the server's semantic search — phrasing matters more. |
+| `search_memory` | Falls back to a **keyword** scan over every memory the cache has seen — listed, previously searched, or saved offline. Labelled, because it is not the server's semantic search — phrasing matters more. |
 | `save_memory` | **Succeeds.** The memory is written to a durable on-disk queue and reported as saved-locally, so the agent does not retry or discard it. |
 | `delete_memory` | Queued the same way. Deleting a memory that is itself still queued just drops it from the queue. |
 
 Queued writes are replayed, oldest first, on the next call that reaches the
 server — and on server start-up, so simply reopening your agent after getting
 back online syncs the backlog. Nothing needs to be run by hand.
+
+Each queued write is replayed exactly once: an entry is claimed with an atomic
+rename before its request goes out, so the start-up drain, a concurrent tool
+call, and a second agent sharing the same cache directory cannot each send the
+same memory and leave you with duplicates.
 
 Three things worth knowing:
 

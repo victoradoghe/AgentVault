@@ -165,6 +165,53 @@ describe("reads while offline", () => {
     expect(cachedAt).toBeGreaterThan(0);
   });
 
+  /**
+   * The documented workflow is `get_project_context` then `search_memory`, and
+   * neither writes the `list_memories` cache — which was the only pool the
+   * offline keyword scan looked at, so search failed outright the first time a
+   * connection dropped. Anything the cache has seen must be searchable.
+   */
+  it("keyword-searches offline over memories seen through search alone", async () => {
+    stubResponse({
+      results: [
+        {
+          id: "m1",
+          title: "Money is integer minor units",
+          content: "Never floats for money.",
+          category: "CodingStandard",
+          importance: 5,
+        },
+      ],
+    });
+    const online = offlineClient();
+    await online.searchMemory("app", "currency");
+
+    stubOffline();
+    const { data, cachedAt, degraded } = await offlineClient().searchMemory("app", "money");
+
+    expect(degraded).toBe(true);
+    expect(cachedAt).toBeGreaterThan(0);
+    expect(data.map((m) => m.title)).toEqual(["Money is integer minor units"]);
+  });
+
+  it("keeps a deleted memory out of later offline searches", async () => {
+    stubResponse({
+      results: [{ id: "m1", title: "Doomed", content: "About to go.", category: "General", importance: 3 }],
+    });
+    await offlineClient().searchMemory("app", "doomed");
+
+    stubResponse({ projects: [{ id: "p1", name: "App", slug: "app", memoryCount: 1 }] });
+    const client = offlineClient();
+    await client.listProjects();
+    stubResponse(null, 204);
+    await client.deleteMemory("m1");
+
+    stubOffline();
+    await expect(offlineClient().searchMemory("app", "doomed")).resolves.toMatchObject({
+      data: [],
+    });
+  });
+
   it("fails rather than inventing data when nothing was ever cached", async () => {
     stubOffline();
     await expect(offlineClient().listProjects()).rejects.toThrow(/Could not reach/);
@@ -246,6 +293,74 @@ describe("saving while offline", () => {
     await offlineClient().listProjects();
 
     expect(store.pendingCount()).toBe(0);
+  });
+
+  /**
+   * The bug this prevents: one memory saved offline arrived on the server
+   * twice. Start-up drains the backlog, the agent's first tool call flushes
+   * too, and both read the same entry off disk before either had finished
+   * sending it — the entry was only deleted after its POST returned.
+   */
+  it("sends a queued write once when two flushes race", async () => {
+    stubOffline();
+    await offlineClient().saveMemory(memory);
+
+    let inFlight = 0;
+    let overlapped = false;
+    const spy = vi.fn(async () => {
+      inFlight += 1;
+      if (inFlight > 1) overlapped = true;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return new Response(JSON.stringify({ memory: { id: "srv" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", spy);
+
+    const client = offlineClient();
+    await Promise.all([client.flush(), client.flush()]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(overlapped).toBe(false);
+    expect(store.pendingCount()).toBe(0);
+  });
+
+  /**
+   * Same hazard, one level out: two agents pointed at the same account share a
+   * cache directory, so the guard cannot live in a single process's memory.
+   */
+  it("sends a queued write once when two separate runners flush together", async () => {
+    stubOffline();
+    await offlineClient().saveMemory(memory);
+
+    const spy = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ memory: { id: "srv" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", spy);
+
+    const one = new OfflineClient(new AmcClient(config), new OfflineStore(root, "ns"), true, () => {});
+    const two = new OfflineClient(new AmcClient(config), new OfflineStore(root, "ns"), true, () => {});
+    await Promise.all([one.flush(), two.flush()]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(store.pendingCount()).toBe(0);
+  });
+
+  /** A claim must not swallow the write when the replay never lands. */
+  it("returns a claimed write to the queue when the replay fails offline", async () => {
+    stubOffline();
+    await offlineClient().saveMemory(memory);
+
+    await offlineClient().flush();
+
+    expect(store.pendingCount()).toBe(1);
+    expect(store.pending()).toHaveLength(1);
   });
 
   it("leaves the queue intact when the connection drops again mid-flush", async () => {

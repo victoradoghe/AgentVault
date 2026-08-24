@@ -110,16 +110,17 @@ export async function revokeApiKey(userId: string, keyId: string): Promise<void>
  * Resolve a raw Bearer key to the owning user's id, or null if no key matches.
  * On a hit, `lastUsedAt` is bumped (best-effort, non-blocking on failure).
  *
- * Lookup is by exact hash (indexed by uniqueness in practice); the constant-time
- * compare below is belt-and-suspenders against a theoretical hash collision and
- * keeps the comparison timing independent of the stored value.
+ * Lookup is a unique-index hit on the hash — this runs on every authenticated
+ * request, including every MCP tool call, so it must not scan the table. The
+ * constant-time compare below is belt-and-suspenders against a theoretical hash
+ * collision and keeps the comparison timing independent of the stored value.
  */
 export async function getUserIdFromApiKey(rawKey: string): Promise<string | null> {
   const key = rawKey.trim();
   if (!key.startsWith(KEY_PREFIX)) return null;
 
   const keyHash = hashKey(key);
-  const match = await prisma.apiKey.findFirst({
+  const match = await prisma.apiKey.findUnique({
     where: { keyHash },
     select: { id: true, userId: true, keyHash: true },
   });

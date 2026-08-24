@@ -29,6 +29,10 @@
  *   - **Every write is atomic.** Files are written to a temp path and renamed,
  *     because this process can be killed at any moment by the agent that
  *     spawned it, and a half-written outbox entry would be a lost memory.
+ *   - **A queued write is replayed by one runner at a time.** Replaying is
+ *     claimed with a rename before the request goes out, so two flushes — two
+ *     agents sharing a cache directory, or the start-up drain racing the first
+ *     tool call — cannot both send the same memory and create a duplicate.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -38,6 +42,20 @@ import path from "node:path";
 
 /** Bumped when cached shapes change; older entries are ignored, not migrated. */
 const CACHE_VERSION = 1;
+
+/**
+ * How long a claimed outbox entry may sit before another runner may take it.
+ *
+ * A claim is released as soon as its replay finishes, so the only way one
+ * outlives this is a process killed mid-request. That must not strand the
+ * memory forever, so claims expire — generously, since the longest legitimate
+ * hold is one request timeout (90s by default) and reclaiming too eagerly
+ * recreates the duplicate this mechanism exists to prevent.
+ */
+const STALE_CLAIM_MS = 10 * 60 * 1000;
+
+/** Extension marking an outbox entry that a runner is replaying right now. */
+const CLAIM_SUFFIX = ".inflight";
 
 /** Default root for cached data, overridable with AMC_CACHE_DIR. */
 export function defaultCacheRoot(): string {
@@ -144,6 +162,8 @@ export class OfflineStore {
    * them in. Unreadable entries are dropped rather than blocking the queue.
    */
   pending(): OutboxEntry[] {
+    this.reclaimStaleClaims();
+
     let names: string[];
     try {
       names = fs.readdirSync(this.outboxDir);
@@ -166,17 +186,51 @@ export class OfflineStore {
     return entries.sort((a, b) => a.queuedAt - b.queuedAt);
   }
 
-  /** Number of queued writes, without parsing them. */
+  /**
+   * Number of writes still waiting to reach the server, without parsing them.
+   * Counts claimed entries too: a claim means "being sent right now", which is
+   * not the same as "synced".
+   */
   pendingCount(): number {
     try {
-      return fs.readdirSync(this.outboxDir).filter((n) => n.endsWith(".json")).length;
+      return fs
+        .readdirSync(this.outboxDir)
+        .filter((n) => n.endsWith(".json") || n.endsWith(CLAIM_SUFFIX)).length;
     } catch {
       return 0;
     }
   }
 
-  /** Drop a queued write once the server has accepted it. */
+  /**
+   * Take exclusive ownership of a queued write so it can be replayed.
+   *
+   * The rename is the lock: exactly one caller can move a given file, so a
+   * loser gets `false` and skips the entry instead of sending it a second time.
+   * Doing this *before* the request — rather than deleting after it — is what
+   * makes reconnecting idempotent.
+   */
+  claim(id: string): boolean {
+    try {
+      fs.renameSync(this.entryFile(id), this.claimFile(id));
+      return true;
+    } catch {
+      // Already claimed by another runner, or already resolved.
+      return false;
+    }
+  }
+
+  /** Put a claimed entry back in the queue — the replay could not be delivered. */
+  release(id: string): void {
+    try {
+      fs.renameSync(this.claimFile(id), this.entryFile(id));
+    } catch {
+      // Nothing to put back.
+    }
+  }
+
+  /** Drop a queued write once the server has accepted (or rejected) it. */
   resolve(id: string): void {
+    this.discard(this.claimFile(id));
     this.discard(this.entryFile(id));
   }
 
@@ -193,6 +247,38 @@ export class OfflineStore {
   private entryFile(id: string): string {
     // Ids come from randomUUID(), so they are already path-safe.
     return path.join(this.outboxDir, `${id}.json`);
+  }
+
+  private claimFile(id: string): string {
+    return path.join(this.outboxDir, `${id}${CLAIM_SUFFIX}`);
+  }
+
+  /**
+   * Return abandoned claims to the queue.
+   *
+   * Only claims older than {@link STALE_CLAIM_MS} are touched, so a replay that
+   * is merely slow keeps its lock. Everything is best-effort: a claim we cannot
+   * stat or rename is left alone and retried on the next pass.
+   */
+  private reclaimStaleClaims(): void {
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.outboxDir);
+    } catch {
+      return;
+    }
+
+    const cutoff = Date.now() - STALE_CLAIM_MS;
+    for (const name of names) {
+      if (!name.endsWith(CLAIM_SUFFIX)) continue;
+      const file = path.join(this.outboxDir, name);
+      try {
+        if (fs.statSync(file).mtimeMs > cutoff) continue;
+        fs.renameSync(file, path.join(this.outboxDir, `${name.slice(0, -CLAIM_SUFFIX.length)}.json`));
+      } catch {
+        // Someone else got there first, or the file vanished.
+      }
+    }
   }
 
   private discard(file: string): void {
@@ -230,4 +316,6 @@ export const cacheKeys = {
   projects: () => "projects",
   context: (slug: string) => `context:${slug}`,
   memories: (slug: string, category?: string) => `memories:${slug}:${category ?? "all"}`,
+  /** Union of every memory seen for a project — the offline search pool. */
+  recall: (slug: string) => `recall:${slug}`,
 } as const;

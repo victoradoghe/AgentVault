@@ -66,6 +66,8 @@ export interface ContextGroup {
 /** The full structured context package. */
 export interface ProjectContext {
   projectId: string;
+  /** Human-readable project name, when the caller knows it. */
+  projectName?: string;
   generatedAt: string;
   tokenBudget: number;
   /** Estimated token size of `markdown` (chars / 4, rounded up). */
@@ -75,7 +77,10 @@ export interface ProjectContext {
     total: number;
     /** Memories included in the package. */
     included: number;
-    /** Memories dropped because the budget was exhausted. */
+    /**
+     * Memories left out — either below the importance floor for a non-priority
+     * category, or squeezed out once the token budget ran out.
+     */
     omitted: number;
   };
   groups: ContextGroup[];
@@ -85,6 +90,12 @@ export interface ProjectContext {
 
 export interface BuildContextOptions {
   projectId?: string;
+  /**
+   * The project's name, used as the markdown title. Without it the package is
+   * headed by a UUID, which is what the agent reading it then has to call the
+   * project.
+   */
+  projectName?: string;
   /** Total token budget for the package. Default 2000. */
   tokenBudget?: number;
   /** Max tokens of a single memory's content before it's truncated. Default 480. */
@@ -164,6 +175,7 @@ export function buildProjectContext(
   options: BuildContextOptions = {},
 ): ProjectContext {
   const projectId = options.projectId ?? "unknown";
+  const projectName = options.projectName;
   const tokenBudget = options.tokenBudget ?? DEFAULTS.tokenBudget;
   const perItemTokenCap = options.perItemTokenCap ?? DEFAULTS.perItemTokenCap;
   const minOtherImportance =
@@ -228,6 +240,7 @@ export function buildProjectContext(
 
   const markdown = renderMarkdown({
     projectId,
+    projectName,
     generatedAt,
     groups,
     total: approved.length,
@@ -237,6 +250,7 @@ export function buildProjectContext(
 
   return {
     projectId,
+    projectName,
     generatedAt: generatedAt.toISOString(),
     tokenBudget,
     tokenEstimate: estimateTokens(markdown),
@@ -252,16 +266,18 @@ export function buildProjectContext(
 
 function renderMarkdown(args: {
   projectId: string;
+  projectName?: string;
   generatedAt: Date;
   groups: ContextGroup[];
   total: number;
   included: number;
   tokenBudget: number;
 }): string {
-  const { projectId, generatedAt, groups, total, included, tokenBudget } = args;
+  const { projectId, projectName, generatedAt, groups, total, included, tokenBudget } =
+    args;
 
   const lines: string[] = [];
-  lines.push(`# Project Context: ${projectId}`);
+  lines.push(`# Project Context: ${projectName ?? projectId}`);
   lines.push(
     `_${included} of ${total} memories · budget ${tokenBudget} tokens · generated ${generatedAt.toISOString()}_`,
   );

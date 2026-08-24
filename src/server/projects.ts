@@ -140,19 +140,22 @@ export async function deleteProject(
 
 /**
  * Internal helper: assert the project exists and is owned by the user, and
- * return its id. Used by the memory and search services before doing work
- * scoped to a project. Throws `NotFoundError` otherwise.
+ * return it. Used by the memory and search services before doing work scoped to
+ * a project. Throws `NotFoundError` otherwise.
+ *
+ * Returns the name alongside the id so a caller that needs to label its output
+ * (the context package titles itself with it) does not have to re-query.
  */
 export async function requireOwnedProject(
   userId: string,
   projectId: string
-): Promise<string> {
+): Promise<{ id: string; name: string }> {
   const uid = userIdSchema.parse(userId);
   const pid = projectIdSchema.parse(projectId);
   const project = await prisma.project.findFirst({
     where: { id: pid, userId: uid },
-    select: { id: true },
+    select: { id: true, name: true },
   });
   if (!project) throw new NotFoundError("Project");
-  return project.id;
+  return project;
 }

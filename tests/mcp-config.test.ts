@@ -19,8 +19,15 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ AMC_API_KEY: "   " })).toThrow(/AMC_API_KEY/);
   });
 
-  it("falls back to the hosted deployment when no base URL is given", () => {
+  it("falls back to a local server when no base URL is given", () => {
     expect(loadConfig({ AMC_API_KEY: "amc_k" }).baseUrl).toBe(DEFAULT_BASE_URL);
+  });
+
+  // AgentVault is self-hosted, so the default must be somewhere the user can
+  // actually run it. A default pointing at someone else's deployment fails
+  // every call with an error that blames the network, not the missing setting.
+  it("defaults to a host the user controls", () => {
+    expect(DEFAULT_BASE_URL).toMatch(/^http:\/\/(127\.0\.0\.1|localhost):\d+$/);
   });
 
   it("strips trailing slashes so path joins stay predictable", () => {

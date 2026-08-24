@@ -109,9 +109,11 @@ claude mcp add agentvault \
   -- node /absolute/path/to/agent-memory-cloud/packages/amc-mcp/dist/index.js
 ```
 
-> `npx -y amc-mcp` does **not** work — the package isn't published to npm. Launch the
-> built entrypoint by absolute path, and set `AMC_BASE_URL` to the address the app is
-> actually served on (the default points at an undeployed host).
+> `npx -y amc-mcp` does **not** work — the package isn't published to npm, so agents
+> launch the built entrypoint by absolute path (which is what the dashboard generates).
+> Once it is published, set `MCP_PACKAGE_NAME` and that page switches to `npx` commands.
+> `AMC_BASE_URL` defaults to `http://127.0.0.1:3000`; set it to wherever the app is
+> actually served.
 
 Codex CLI and OpenCode configs are in [`packages/amc-mcp/README.md`](packages/amc-mcp/README.md).
 
@@ -137,7 +139,8 @@ flaky connection has failed at the only job this product has. So `save_memory`
 **succeeds while offline** — the memory goes to a durable on-disk queue and is
 replayed, in order, on the next call that reaches the server. Reads fall back to
 the last cached copy, labelled with its age, and `search_memory` degrades to a
-keyword scan. Full details and the env vars are in
+keyword scan over every memory the cache has seen — from listings, from earlier
+searches, and from saves made offline. Full details and the env vars are in
 [`packages/amc-mcp/README.md`](packages/amc-mcp/README.md#working-offline).
 
 Only a genuinely unreachable server triggers any of this: a 401 or a 500 means
@@ -154,7 +157,8 @@ pnpm model:fetch
 
 It is cached in `.model-cache/` (override with `AMC_MODEL_CACHE_DIR`) —
 deliberately **outside `node_modules`**, so that `pnpm install` doesn't silently
-delete your offline capability. Without this step, the first memory saved on a
+delete your offline capability. On a host with a read-only working directory
+(serverless), it falls back to the system temp directory instead of failing. Without this step, the first memory saved on a
 disconnected machine fails with a download error.
 
 ### The dashboard stays readable
@@ -273,8 +277,12 @@ embedding model is covered by `pnpm verify` instead.
 
 ## Deployment
 
-Deploys to Vercel as a standard Next.js app. Two things to know:
+Deploys to Vercel as a standard Next.js app. Three things to know:
 
+- **Embedding needs a writable cache and egress.** The ~90 MB model is fetched
+  from huggingface.co on the first save and cached on disk; on a serverless host
+  that cache lands in the temp directory and every cold container pays for it
+  again. Set `AMC_MODEL_CACHE_DIR` to persistent storage where you have it.
 - **Set `DATABASE_URL`, `DIRECT_URL`, and the Supabase variables** in the host's
   environment, then run `pnpm db:setup` once against the production database.
   The Supabase variables are not optional in production: without them the app

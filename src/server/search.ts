@@ -116,7 +116,7 @@ export async function getProjectContext(
   input: ProjectContextInput
 ): Promise<ProjectContext> {
   const { userId, projectId } = projectContextSchema.parse(input);
-  await requireOwnedProject(userId, projectId);
+  const project = await requireOwnedProject(userId, projectId);
 
   const memories = await prisma.memory.findMany({
     where: { projectId },
@@ -133,6 +133,8 @@ export async function getProjectContext(
 
   return buildProjectContext(
     memories.map((m) => ({ ...m, category: m.category as MemoryCategory })),
-    { projectId }
+    // The name, not just the id: this package is read by an agent, and a
+    // markdown document titled with a UUID tells it nothing about the project.
+    { projectId, projectName: project.name }
   );
 }

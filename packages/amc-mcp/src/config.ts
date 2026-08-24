@@ -4,8 +4,8 @@
  *
  *   AMC_API_KEY            (required) — the user's AgentVault API key.
  *   AMC_BASE_URL           (optional) — base URL of the AgentVault REST API.
- *                                       Defaults to the hosted deployment;
- *                                       override with http://localhost:3000.
+ *                                       Defaults to a local server on port
+ *                                       3000; set it to your own deployment.
  *   AMC_REQUEST_TIMEOUT_MS (optional) — per-request abort budget.
  *   AMC_CACHE_DIR          (optional) — where the offline cache and outbox
  *                                       live. Defaults to ~/.agentvault.
@@ -15,8 +15,19 @@
 
 import { defaultCacheRoot } from "./store.js";
 
-/** Default hosted AgentVault deployment. Override with AMC_BASE_URL for local dev. */
-export const DEFAULT_BASE_URL = "https://agent-memory-cloud.vercel.app";
+/**
+ * Where to look for the AgentVault API when AMC_BASE_URL is not set.
+ *
+ * AgentVault is self-hosted: there is no shared deployment to point at, so the
+ * default is the local server (`pnpm dev` / `pnpm start`) that a user running
+ * from a checkout already has. Anyone hosting it elsewhere sets AMC_BASE_URL,
+ * and the dashboard's "Connect your agent" page fills that in for them.
+ *
+ * A default naming some hosted URL would be worse than no default at all: every
+ * tool call fails against a host the user does not control, and the error blames
+ * the network rather than the missing setting.
+ */
+export const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 
 /**
  * How long to wait for one API call before giving up.

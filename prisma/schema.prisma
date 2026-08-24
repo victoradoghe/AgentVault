@@ -34,7 +34,10 @@ model User {
 model ApiKey {
   id         String    @id @default(uuid()) @db.Uuid
   userId     String    @map("user_id") @db.Uuid
-  keyHash    String    @map("key_hash")
+  // Unique, and therefore indexed: every authenticated API request looks a key
+  // up by this hash, so without an index each one is a sequential scan of the
+  // whole table.
+  keyHash    String    @unique @map("key_hash")
   label      String?
   createdAt  DateTime  @default(now()) @map("created_at")
   lastUsedAt DateTime? @map("last_used_at")

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -27,9 +28,29 @@ if (HF_ENDPOINT) {
  *
  * Override with AMC_MODEL_CACHE_DIR to share one copy between checkouts, or to
  * bake the model into a container image at a known path.
+ *
+ * On a serverless host the working directory is read-only, so the repo-root
+ * default cannot be created at all and every embed would fail on a directory
+ * error rather than anything to do with embedding. There, the temp directory is
+ * the only writable place — slower (each cold container re-downloads the model)
+ * but working, and `AMC_MODEL_CACHE_DIR` still wins when there is somewhere
+ * better to put it.
  */
-const MODEL_CACHE_DIR =
-  process.env.AMC_MODEL_CACHE_DIR?.trim() || path.join(process.cwd(), ".model-cache");
+function resolveModelCacheDir(): string {
+  const override = process.env.AMC_MODEL_CACHE_DIR?.trim();
+  if (override) return override;
+
+  const preferred = path.join(process.cwd(), ".model-cache");
+  try {
+    fs.mkdirSync(preferred, { recursive: true });
+    fs.accessSync(preferred, fs.constants.W_OK);
+    return preferred;
+  } catch {
+    return path.join(os.tmpdir(), "agentvault-model-cache");
+  }
+}
+
+const MODEL_CACHE_DIR = resolveModelCacheDir();
 
 // Captured before the override so an existing download can be reused rather
 // than re-fetched — see `seedCacheFromNodeModules`.
