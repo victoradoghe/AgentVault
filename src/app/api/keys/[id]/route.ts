@@ -1,5 +1,6 @@
 import { getRequestAuth } from "@/lib/api/auth";
 import { errorResponse, handleError, noContent, unauthorized } from "@/lib/api/http";
+import { enforceRateLimit, GENERAL_RULE } from "@/lib/api/rate-limit";
 import { revokeApiKey } from "@/server/apiKeys";
 
 export const runtime = "nodejs";
@@ -13,6 +14,10 @@ export async function DELETE(
   try {
     const auth = await getRequestAuth(req);
     if (!auth) return unauthorized();
+
+    const limited = enforceRateLimit(GENERAL_RULE, auth.userId);
+    if (limited) return limited;
+
     if (auth.method !== "session") {
       return errorResponse(403, "API keys can only be managed from the dashboard.");
     }

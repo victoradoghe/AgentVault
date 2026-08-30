@@ -18,7 +18,10 @@ Resources are addressed by **project slug** externally; the service layer is
 id-based, so each route translates `:slug` → project id (scoped to the caller).
 Success bodies are single-key envelopes; errors are `{ "error": string }` with a
 matching status (`400` validation, `401` unauthenticated, `403` forbidden,
-`404` not-found/not-owned).
+`404` not-found/not-owned, `429` rate limited, `503` database not configured).
+
+A resource belonging to another user is **`404`, never `403`** — a 403 would
+confirm it exists.
 
 | Method & path | Auth | Body / query | Success |
 | --- | --- | --- | --- |
@@ -39,6 +42,24 @@ matching status (`400` validation, `401` unauthenticated, `403` forbidden,
 Key management is session-only so a leaked API key can't mint sibling keys. The
 raw key secret (`amc_…`) is returned exactly once, at creation, and stored only
 as a SHA-256 hash thereafter.
+
+### Rate limits
+
+Every route is rate limited, keyed on the authenticated user (sign-in is keyed
+on client IP, since there is no user yet). Over budget, a route returns `429`
+with `Retry-After` in whole seconds:
+
+| Scope | Budget |
+| --- | --- |
+| `POST /api/auth/local` | 10 / 10 min per IP |
+| `GET /api/projects/:slug/search`, `POST /api/projects/:slug/memories`, `PATCH /api/memories/:id` | 30 / min |
+| `POST /api/keys` | 10 / hour |
+| Everything else | 240 / min |
+
+Every response carries `RateLimit-Limit`, `RateLimit-Remaining`, and
+`RateLimit-Reset` on the 429 so a client can pace itself rather than retry
+blindly. See [Rate limiting](../README.md#rate-limiting) for what the in-process
+counter does and does not protect against.
 
 ## Category enum
 

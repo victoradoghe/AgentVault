@@ -1,5 +1,6 @@
 import { getRequestAuth } from "@/lib/api/auth";
 import { handleError, ok, unauthorized } from "@/lib/api/http";
+import { enforceRateLimit, GENERAL_RULE } from "@/lib/api/rate-limit";
 import { getProjectBySlug } from "@/server/projects";
 import { getProjectContext } from "@/server/search";
 
@@ -21,6 +22,9 @@ export async function GET(
   try {
     const auth = await getRequestAuth(req);
     if (!auth) return unauthorized();
+
+    const limited = enforceRateLimit(GENERAL_RULE, auth.userId);
+    if (limited) return limited;
 
     const { slug } = await params;
     const project = await getProjectBySlug(auth.userId, slug);

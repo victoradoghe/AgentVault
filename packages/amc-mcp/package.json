@@ -10,6 +10,15 @@
     "memory",
     "ai-agents"
   ],
+  "homepage": "https://github.com/victoradoghe/AgentVault/tree/master/packages/amc-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/victoradoghe/AgentVault.git",
+    "directory": "packages/amc-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/victoradoghe/AgentVault/issues"
+  },
   "license": "MIT",
   "type": "module",
   "bin": {

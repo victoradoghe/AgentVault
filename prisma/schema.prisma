@@ -23,6 +23,13 @@ datasource db {
 model User {
   id        String   @id @default(uuid()) @db.Uuid
   email     String   @unique
+  // The auth provider's own id for this person (Supabase's `sub`). Nullable:
+  // rows created before this column existed, and every row created in local dev
+  // auth mode, have no external identity to record. It is the PREFERRED lookup
+  // key when present — email is mutable, and a user who changes theirs in
+  // Supabase would otherwise come back as a brand-new account with none of
+  // their memories. See src/server/auth.ts.
+  externalId String? @unique @map("external_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   apiKeys  ApiKey[]

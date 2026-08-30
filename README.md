@@ -91,6 +91,26 @@ visitor could forge a session cookie for any account.
 
 `pnpm verify` checks all of this and fails with the specific fix.
 
+#### Identity
+
+AgentVault keeps its own `User` row — projects and memories hang off it — tied
+to whoever the auth provider says is signed in. That tie is the provider's
+**immutable id** (Supabase's `sub`), stored as `users.external_id`, not the email
+address. Email is mutable: keyed on it, a user who changes their address in
+Supabase comes back as a brand-new account with none of their memories, and the
+old row is orphaned with no way to reach it.
+
+Accounts created before that column existed have no id recorded, so lookup falls
+back to email and stamps the provider id onto the row it finds — a one-time
+adoption that makes the change invisible to anyone who already has an account. A
+row already claimed by a *different* provider id is never adopted: two auth
+accounts asserting one address have no honest owner, so the caller is treated as
+signed out rather than handed someone else's memories.
+
+Local dev mode has no provider, so there email genuinely is the identity — which
+is another way of saying it is not an identity at all, and why it is refused in
+production. See [`src/server/auth.ts`](src/server/auth.ts).
+
 ## Connecting an agent
 
 1. Build the MCP server once: `pnpm --filter amc-mcp build`.
@@ -228,8 +248,11 @@ DB-backed routes return a clear `503 Database not configured`.
 | `pnpm build` | Production build. **Webpack, not Turbopack** — see below. |
 | `pnpm test` | Unit tests (Vitest). No database or network needed. |
 | `pnpm test:watch` | Tests in watch mode. |
+| `pnpm test:integration` | Integration tests. **Needs a live database** — see [Testing](#testing). |
 | `pnpm verify` | Full end-to-end stack verification against a live database. |
 | `pnpm db:setup` | `prisma db push` + apply `prisma/pgvector.sql`. |
+| `pnpm db:deploy` | Apply pending migrations. The production command. |
+| `pnpm db:baseline` | Mark the baseline migration as applied on a pre-migration database. |
 | `pnpm db:push` / `db:migrate` / `db:studio` | Standard Prisma commands. |
 | `pnpm model:fetch` | Download the embedding model so embedding works offline. Run once, while online. |
 | `pnpm smoke` | Dev-only service-layer walkthrough with printed output. |
@@ -248,11 +271,15 @@ src/
   lib/
     categories.ts         The memory taxonomy (single source of truth)
     validation.ts  env.ts  auth-mode.ts  prisma.ts
+    api/                  Request auth, HTTP envelopes, rate limiting
     offline/              Local cache + read-through hook (offline reads)
 packages/amc-mcp/         The MCP server (thin REST client, publishable)
 prisma/                   Schema + pgvector.sql
 public/sw.js              Service worker — serves the app shell offline
 tests/                    Vitest unit tests
+  integration/            Isolation, HTTP, API-key and rate-limit tests (needs a DB)
+prisma/migrations/        Schema history, from the 0_init baseline
+.github/workflows/ci.yml  Typecheck, lint, unit, build + integration on pgvector
 docs/API.md               Full REST + taxonomy + context reference
 ```
 
@@ -264,16 +291,107 @@ API and MCP server get identical behaviour and identical ownership checks. See
 ## Testing
 
 ```bash
-pnpm test      # 124 unit tests, no I/O
-pnpm verify    # end-to-end, needs a live database
+pnpm test              # 175 unit tests, no I/O
+pnpm test:integration  # 54 integration tests, needs Postgres + pgvector
+pnpm verify            # end-to-end stack check against a live database
 ```
 
-The unit suite covers the pure logic — context packing and token budgeting, the
-category taxonomy's invariants, input validation, slug generation, session-token
-signing and tamper rejection, auth-mode resolution and its production
-fail-closed rules, the offline cache's per-user isolation, and the MCP client's
-envelope unwrapping and error mapping. Anything requiring real Postgres or the
-embedding model is covered by `pnpm verify` instead.
+**Unit** (`tests/*.test.ts`) covers the pure logic — context packing and token
+budgeting, the category taxonomy's invariants, input validation, slug
+generation, session-token signing and tamper rejection, auth-mode resolution and
+its production fail-closed rules, the sliding-window rate limiter, the offline
+cache's per-user isolation, and the MCP client's envelope unwrapping and error
+mapping. No database, no network, no embedding model.
+
+**Integration** (`tests/integration/`) covers what the unit suite structurally
+cannot, because it lives in Prisma `where` clauses and raw SQL joins:
+
+- **Cross-user isolation** — every exported service read and write is called
+  with a second user's id and must raise `NotFoundError`. This is the property
+  the whole product rests on, and the one a refactor can silently break: a
+  dropped `where` clause compiles and passes every other test.
+- **Identity resolution** — a changed email keeps the same account, a legacy
+  row is adopted exactly once, and a second auth account claiming the same
+  address gets nothing (see [Identity](#identity)).
+- **The HTTP layer** — the same isolation, driven through the route handlers
+  with Bearer API keys, asserted as status codes. A route that looked a project
+  up before authenticating would pass the service tests and still leak.
+- **API-key lifecycle** — keys are stored hashed and never recoverable,
+  revocation actually stops a key working, and one user cannot revoke another's.
+- **Rate limiting** — the budget is spent, refused with a `Retry-After`, and is
+  per user rather than global.
+
+It needs `DATABASE_URL` and **fails loudly** rather than skipping when there
+isn't one: a security suite that quietly passes because it never ran is worse
+than no suite at all. Locally, point it at a scratch database or the same one
+`pnpm verify` uses — every row it creates hangs off a throwaway user and is
+cascade-deleted afterwards.
+
+`pnpm verify` is a different tool for a different question: not "is the code
+correct" but "is *this deployment* wired up" — env vars, connectivity, schema,
+pgvector, model download, and one real round trip.
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs all of it on every
+push and pull request: typecheck (app + MCP server), lint, unit tests, the
+production build, and the MCP server build — then, in a second job against a
+`pgvector/pgvector:pg16` service container, `prisma migrate deploy` followed by
+the integration suite. The embedding model is cached on its name, so it is
+downloaded once rather than on every run.
+
+## Migrations
+
+Schema history lives in `prisma/migrations/`, starting from the `0_init`
+baseline. A production deploy runs:
+
+```bash
+pnpm db:deploy   # prisma migrate deploy
+pnpm db:vector   # the pgvector column + indexes Prisma can't model
+```
+
+**A database created before migrations existed** — i.e. with `pnpm db:setup` or
+`pnpm db:push` — already contains everything in `0_init`. Mark it as applied
+once, rather than running it, then apply everything after it:
+
+```bash
+pnpm db:baseline   # records 0_init as already applied
+pnpm db:deploy     # applies 1_user_external_id and anything later
+```
+
+> **Existing installs must run this.** `1_user_external_id` adds the column that
+> ties an account to its auth provider (see [Identity](#identity)). It is
+> additive — a nullable column and a unique index, no backfill, no data touched —
+> but until it is applied, signing in fails with `The column users.external_id
+> does not exist`.
+
+`pnpm db:push` is still the right tool while iterating locally; `db:deploy` is
+what should touch anything holding real data.
+
+## Rate limiting
+
+Every API route is rate limited ([`src/lib/api/rate-limit.ts`](src/lib/api/rate-limit.ts)).
+Over-budget requests get a `429` with `Retry-After` and `RateLimit-*` headers.
+
+| Scope | Budget | Keyed on |
+| --- | --- | --- |
+| Sign-in (`POST /api/auth/local`) | 10 / 10 min | client IP |
+| Embedding routes (search, memory create/update) | 30 / min | user |
+| Minting API keys | 10 / hour | user |
+| Everything else | 240 / min | user |
+
+Limits are keyed on the **authenticated user** wherever one exists, so one
+runaway agent loop cannot exhaust anybody else's budget. Sign-in is the sole
+exception — there is no user yet — and so the sole place a spoofable
+`x-forwarded-for` is trusted.
+
+The counter is a sliding window held in process memory. That is a real defence
+against the things that actually threaten a self-hosted memory store — a stuck
+retry, a loop bug, a script hammering sign-in — and **not** a defence against a
+distributed attacker: on a serverless host each instance counts separately, so
+the true ceiling is `limit x instances`. The alternative was requiring Redis to
+run AgentVault at all. If you need a hard global ceiling, put a limiter in front
+(Vercel Firewall, Cloudflare); this one stays useful underneath it.
 
 ## Deployment
 
@@ -282,9 +400,14 @@ Deploys to Vercel as a standard Next.js app. Three things to know:
 - **Embedding needs a writable cache and egress.** The ~90 MB model is fetched
   from huggingface.co on the first save and cached on disk; on a serverless host
   that cache lands in the temp directory and every cold container pays for it
-  again. Set `AMC_MODEL_CACHE_DIR` to persistent storage where you have it.
+  again. Set `AMC_MODEL_CACHE_DIR` to persistent storage where you have it. The
+  three routes that embed declare `maxDuration = 60` for the same reason — a
+  cold container's first vector takes ~15–20s, comfortably past the default
+  function timeout.
 - **Set `DATABASE_URL`, `DIRECT_URL`, and the Supabase variables** in the host's
-  environment, then run `pnpm db:setup` once against the production database.
+  environment, then run `pnpm db:deploy && pnpm db:vector` against the production
+  database (see [Migrations](#migrations); on a database that predates migrations,
+  `pnpm db:baseline` first).
   The Supabase variables are not optional in production: without them the app
   has no way to authenticate anyone (see [Authentication](#authentication)).
 - **Both `dev` and `build` use webpack, not Turbopack.** `next build --turbopack`

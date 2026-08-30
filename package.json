@@ -2,6 +2,7 @@
   "name": "agent-memory-cloud",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "engines": {
     "node": ">=20.9.0"
   },
@@ -18,10 +19,13 @@
     "db:push": "prisma db push",
     "db:vector": "tsx scripts/db-vector.ts",
     "db:setup": "prisma db push && tsx scripts/db-vector.ts",
+    "db:deploy": "prisma migrate deploy",
+    "db:baseline": "prisma migrate resolve --applied 0_init",
     "smoke": "tsx scripts/smoke.ts",
     "model:fetch": "tsx scripts/fetch-model.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "verify": "tsx scripts/verify.ts"
   },
   "dependencies": {

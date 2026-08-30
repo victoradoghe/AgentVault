@@ -1,5 +1,6 @@
 import { getRequestAuth } from "@/lib/api/auth";
 import { created, errorResponse, handleError, ok, unauthorized } from "@/lib/api/http";
+import { enforceRateLimit, GENERAL_RULE, KEY_MINTING_RULE } from "@/lib/api/rate-limit";
 import { createApiKey, listApiKeys } from "@/server/apiKeys";
 
 export const runtime = "nodejs";
@@ -18,6 +19,10 @@ export async function GET(req: Request) {
   try {
     const auth = await getRequestAuth(req);
     if (!auth) return unauthorized();
+
+    const limited = enforceRateLimit(GENERAL_RULE, auth.userId);
+    if (limited) return limited;
+
     if (!requireSession(auth.method)) {
       return errorResponse(403, "API keys can only be managed from the dashboard.");
     }
@@ -37,6 +42,10 @@ export async function POST(req: Request) {
   try {
     const auth = await getRequestAuth(req);
     if (!auth) return unauthorized();
+
+    const limited = enforceRateLimit(KEY_MINTING_RULE, auth.userId);
+    if (limited) return limited;
+
     if (!requireSession(auth.method)) {
       return errorResponse(403, "API keys can only be managed from the dashboard.");
     }

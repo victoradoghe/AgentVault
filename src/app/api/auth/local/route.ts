@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { created, errorResponse, handleError, noContent } from "@/lib/api/http";
+import { AUTH_RULE, clientIp, enforceRateLimit } from "@/lib/api/rate-limit";
 import {
   isLocalAuthMode,
   isSupabaseConfigured,
@@ -30,6 +31,13 @@ const MAX_AGE = 60 * 60 * 24 * 30;
 
 export async function POST(req: Request) {
   try {
+    // Keyed by IP, and checked before anything else: this is the one endpoint
+    // that hands out a session with no password, so the cost of guessing at it
+    // must not be free. Every other route keys its limit on the authenticated
+    // user, which is why this is the only caller of `clientIp`.
+    const limited = enforceRateLimit(AUTH_RULE, `ip:${clientIp(req)}`);
+    if (limited) return limited;
+
     if (!isLocalAuthMode()) {
       // Either Supabase is configured (use it), or local mode isn't permitted
       // here — in production it must be opted into explicitly. Both mean this

@@ -447,8 +447,21 @@ async function checkRoundTrip(): Promise<void> {
     );
   } finally {
     // Cascades to the project and its memories.
-    await prisma.user.delete({ where: { id: user.id } }).catch(() => {});
-    pass("Cleaned up all verification data");
+    // `deleteMany`, not `delete`: `delete` returns the deleted row, so it
+    // SELECTs every column of `users` and fails outright against a database
+    // missing one — which is precisely the state a half-migrated install is in,
+    // and precisely when this cleanup must still work. And a failure is
+    // reported: silently swallowing it is how verification runs leave throwaway
+    // users behind in a real database.
+    try {
+      await prisma.user.deleteMany({ where: { id: user.id } });
+      pass("Cleaned up all verification data");
+    } catch (err) {
+      warn(
+        `Could not delete the verification user ${user.email} (${user.id}). ` +
+          `Remove it by hand. Cause: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
 

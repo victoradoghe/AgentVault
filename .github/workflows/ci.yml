@@ -1,0 +1,119 @@
+name: CI
+
+# Every check that has to hold before AgentVault ships. Two jobs, split by what
+# they need: `checks` is pure and fast, `integration` needs a real Postgres with
+# pgvector and the embedding model, so it is slower and kept separate.
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The app validates env at import, and `next build` renders pages. Neither
+  # needs a reachable database — the connection is lazy — but both need
+  # well-formed URLs, so give them ones that parse and point nowhere.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agentvault
+  DIRECT_URL: postgresql://postgres:postgres@localhost:5432/agentvault
+
+jobs:
+  checks:
+    name: Typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # `postinstall` runs `prisma generate`, which writes src/generated/prisma —
+      # git-ignored, so nothing typechecks until this has run.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Typecheck the MCP server
+        run: pnpm --filter amc-mcp typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      # Webpack, not Turbopack — see the Deployment section of the README.
+      - name: Build
+        run: pnpm build
+
+      # The published artifact for the MCP server. Building it here means a
+      # broken `npm publish` is caught before release rather than by a user.
+      - name: Build the MCP server
+        run: pnpm --filter amc-mcp build
+
+  integration:
+    name: Integration tests (Postgres + pgvector)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # The pgvector image rather than plain postgres: the suite exercises the
+        # `<=>` cosine operator, so the extension has to be installable.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentvault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ~90 MB from huggingface.co. Cached on the model name, so it is fetched
+      # once and every later run is offline for this step. Restoring a partial
+      # cache is handled by `pnpm model:fetch`, which embeds real text to prove
+      # the files are complete rather than merely present.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: .model-cache
+          key: model-Xenova-all-MiniLM-L6-v2-v1
+
+      - name: Prime the embedding model
+        run: pnpm model:fetch
+
+      # `migrate deploy` rather than `db push`, deliberately: it is the command a
+      # production deploy runs, so CI proves the committed migration actually
+      # builds the schema the tests then exercise. The pgvector column and its
+      # indexes are applied by the integration setup, which calls the same
+      # idempotent SQL the app ships with.
+      - name: Apply migrations
+        run: pnpm db:deploy
+
+      - name: Integration tests
+        run: pnpm test:integration
